@@ -41,3 +41,13 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Unit tests
+        run: node --test "tests/**/*.test.js"
+
+      - name: Release metadata smoke check
+        run: npm run release:validate
+
+      - name: Production dependency audit
+        run: npm run audit:prod
+        continue-on-error: true

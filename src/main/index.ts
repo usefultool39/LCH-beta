@@ -23,8 +23,10 @@ import {
   EncryptedEnvelope,
   FirewallStatus,
   MAX_AUDIT_EVENTS,
+  MAX_CONTROL_MESSAGE_BYTES,
   MAX_CONVERSATION_EVENTS,
   MAX_FILE_BYTES,
+  MAX_LOCAL_API_BODY_BYTES,
   MAX_TASK_OUTPUT_BYTES,
   NetworkInfo,
   PEER_TIMEOUT_MS,
@@ -40,6 +42,10 @@ import {
   TrustedDevice,
   isDiscoveryPacket
 } from '../shared/protocol';
+import { decodeFilePayload } from '../shared/file-transfer';
+import { cleanSharedPath, resolveInsideRoot } from '../shared/shared-paths';
+import { ControlReplayGuard } from '../shared/security';
+import { blockedDeviceFromTrust, isDeviceBlocked, isDeviceTrusted, trustedDeviceFromPeer } from '../shared/trust';
 
 type RuntimePeer = PeerInfo;
 
@@ -107,6 +113,7 @@ const remoteSessions = new Map<string, RemoteSessionRecord>();
 const remoteSessionWindows = new Map<string, BrowserWindow>();
 const remoteWindowClosingByMain = new Set<string>();
 const localSseClients = new Set<http.ServerResponse>();
+const controlReplayGuard = new ControlReplayGuard();
 let remoteInputChain: Promise<unknown> = Promise.resolve();
 let nutRuntime: Promise<any> | null = null;
 
@@ -130,6 +137,16 @@ function runtimeLogPath() {
   return path.join(app.getPath('userData'), 'runtime.log');
 }
 
+function writePrivateFile(filePath: string, contents: string) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, contents, { mode: 0o600 });
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Windows may ignore POSIX modes; the userData directory still remains per-user.
+  }
+}
+
 function logRuntimeError(label: string, error: unknown) {
   try {
     fs.mkdirSync(path.dirname(runtimeLogPath()), { recursive: true });
@@ -149,8 +166,8 @@ function refreshWindowsFirewallRules() {
     "Get-NetFirewallRule -DisplayName 'lan control hub.exe' | Where-Object { $_.Action -eq 'Block' } | Remove-NetFirewallRule;",
     "Get-NetFirewallRule -DisplayName 'Lan Control Hub TCP 46881-46911' | Remove-NetFirewallRule;",
     "Get-NetFirewallRule -DisplayName 'Lan Control Hub UDP 46880' | Remove-NetFirewallRule;",
-    "New-NetFirewallRule -DisplayName 'Lan Control Hub TCP 46881-46911' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 46881-46911 -Profile Any | Out-Null;",
-    "New-NetFirewallRule -DisplayName 'Lan Control Hub UDP 46880' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 46880 -Profile Any | Out-Null;"
+    "New-NetFirewallRule -DisplayName 'Lan Control Hub TCP 46881-46911' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 46881-46911 -Profile Private,Domain | Out-Null;",
+    "New-NetFirewallRule -DisplayName 'Lan Control Hub UDP 46880' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 46880 -Profile Private,Domain | Out-Null;"
   ].join(' ');
   try {
     const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
@@ -220,8 +237,8 @@ $ErrorActionPreference = 'SilentlyContinue'
 Get-NetFirewallRule -DisplayName 'lan control hub.exe' | Where-Object { $_.Action -eq 'Block' } | Remove-NetFirewallRule
 Get-NetFirewallRule -DisplayName 'Lan Control Hub TCP 46881-46911' | Remove-NetFirewallRule
 Get-NetFirewallRule -DisplayName 'Lan Control Hub UDP 46880' | Remove-NetFirewallRule
-New-NetFirewallRule -DisplayName 'Lan Control Hub TCP 46881-46911' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 46881-46911 -Profile Any | Out-Null
-New-NetFirewallRule -DisplayName 'Lan Control Hub UDP 46880' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 46880 -Profile Any | Out-Null
+New-NetFirewallRule -DisplayName 'Lan Control Hub TCP 46881-46911' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 46881-46911 -Profile Private,Domain | Out-Null
+New-NetFirewallRule -DisplayName 'Lan Control Hub UDP 46880' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 46880 -Profile Private,Domain | Out-Null
 `;
 
 async function getFirewallStatus(): Promise<FirewallStatus> {
@@ -388,15 +405,13 @@ function loadState(): AppState {
 }
 
 function saveState() {
-  fs.mkdirSync(path.dirname(statePath()), { recursive: true });
-  fs.writeFileSync(statePath(), `${JSON.stringify(state, null, 2)}\n`);
+  writePrivateFile(statePath(), `${JSON.stringify(state, null, 2)}\n`);
   writeLocalApiConfig();
 }
 
 function writeLocalApiConfig() {
   if (!state?.localApiToken) return;
-  fs.mkdirSync(path.dirname(localApiConfigPath()), { recursive: true });
-  fs.writeFileSync(localApiConfigPath(), `${JSON.stringify({
+  writePrivateFile(localApiConfigPath(), `${JSON.stringify({
     app: APP_NAME,
     port: localApiPort,
     token: state.localApiToken,
@@ -422,14 +437,11 @@ function networkInfo(): NetworkInfo {
 }
 
 function isBlockedDevice(deviceId: string, publicKeyHashValue?: string) {
-  const blocked = state.blockedDevices[deviceId];
-  if (!blocked) return false;
-  return !blocked.publicKeyHash || !publicKeyHashValue || blocked.publicKeyHash === publicKeyHashValue;
+  return isDeviceBlocked(state.blockedDevices, deviceId, publicKeyHashValue);
 }
 
 function isPeerTrusted(peer: Pick<PeerInfo, 'id' | 'publicKey' | 'publicKeyHash'>) {
-  const trusted = state.trustedDevices[peer.id];
-  return Boolean(trusted && trusted.publicKey === peer.publicKey && !isBlockedDevice(peer.id, peer.publicKeyHash));
+  return isDeviceTrusted(state.trustedDevices, state.blockedDevices, peer);
 }
 
 function serializePeers() {
@@ -636,14 +648,10 @@ function trustDevice(peerId: string) {
   const peer = peers.get(id);
   if (!peer) throw new Error('设备不在线');
   delete state.blockedDevices[id];
-  state.trustedDevices[id] = {
-    id,
-    name: peer.name,
-    platform: peer.platform,
-    publicKey: peer.publicKey,
-    publicKeyHash: peer.publicKeyHash || publicKeyHash(peer.publicKey),
-    trustedAt: Date.now()
-  };
+  state.trustedDevices[id] = trustedDeviceFromPeer({
+    ...peer,
+    publicKeyHash: peer.publicKeyHash || publicKeyHash(peer.publicKey)
+  });
   addAudit('device.trust', `信任设备 ${peer.name}`, state.device.id, id);
   saveState();
   emitState();
@@ -655,14 +663,8 @@ function revokeTrustedDevice(peerId: string) {
   if (!id || id === state.device.id) throw new Error('不能撤销本机信任');
   const trusted = state.trustedDevices[id];
   const peer = peers.get(id);
-  const publicKeyHashValue = peer?.publicKeyHash || trusted?.publicKeyHash;
   delete state.trustedDevices[id];
-  state.blockedDevices[id] = {
-    id,
-    name: peer?.name || trusted?.name || id,
-    publicKeyHash: publicKeyHashValue,
-    blockedAt: Date.now()
-  };
+  state.blockedDevices[id] = blockedDeviceFromTrust(id, peer, trusted);
   addAudit('device.revoke', `撤销设备信任 ${state.blockedDevices[id].name}`, state.device.id, id);
   saveState();
   emitState();
@@ -751,14 +753,7 @@ function resetNetworkTrust() {
 }
 
 function trustSelf() {
-  state.trustedDevices[state.device.id] = {
-    id: state.device.id,
-    name: state.device.name,
-    platform: state.device.platform,
-    publicKey: state.device.publicKey,
-    publicKeyHash: state.device.publicKeyHash,
-    trustedAt: Date.now()
-  };
+  state.trustedDevices[state.device.id] = trustedDeviceFromPeer(state.device);
 }
 
 function signPayload(payload: unknown) {
@@ -831,9 +826,13 @@ function decryptEnvelope(envelope: EncryptedEnvelope) {
   if (!payload?.fromId || !payload?.type || !signed.publicKey || !signed.signature) {
     throw new Error('控制消息缺少签名字段');
   }
+  if (envelope.fromId && envelope.fromId !== payload.fromId) {
+    throw new Error('控制消息发送方不一致');
+  }
   if (!verifyPayload(payload, signed.signature, signed.publicKey)) {
     throw new Error('控制消息签名无效');
   }
+  controlReplayGuard.validate(payload);
   const trusted = state.trustedDevices[payload.fromId];
   const senderKeyHash = publicKeyHash(signed.publicKey);
   if (isBlockedDevice(payload.fromId, senderKeyHash)) {
@@ -843,14 +842,13 @@ function decryptEnvelope(envelope: EncryptedEnvelope) {
     throw new Error('设备身份密钥已变化');
   }
   if (!trusted && state.autoTrustDevices) {
-    state.trustedDevices[payload.fromId] = {
+    state.trustedDevices[payload.fromId] = trustedDeviceFromPeer({
       id: payload.fromId,
       name: payload.fromName,
       platform: 'unknown',
       publicKey: signed.publicKey,
-      publicKeyHash: senderKeyHash,
-      trustedAt: Date.now()
-    };
+      publicKeyHash: senderKeyHash
+    });
     saveState();
   } else if (!trusted) {
     throw new Error('设备未被信任');
@@ -907,14 +905,10 @@ function rememberPeer(packet: DiscoveryPacket, address: string) {
   const identityMismatch = Boolean(trusted && trusted.publicKey !== packet.device.publicKey);
   const blocked = isBlockedDevice(packet.device.id, packet.device.publicKeyHash);
   if (!trusted && !identityMismatch && !blocked && state.autoTrustDevices) {
-    state.trustedDevices[packet.device.id] = {
-      id: packet.device.id,
-      name: packet.device.name,
-      platform: packet.device.platform,
-      publicKey: packet.device.publicKey,
-      publicKeyHash: packet.device.publicKeyHash || publicKeyHash(packet.device.publicKey),
-      trustedAt: Date.now()
-    };
+    state.trustedDevices[packet.device.id] = trustedDeviceFromPeer({
+      ...packet.device,
+      publicKeyHash: packet.device.publicKeyHash || publicKeyHash(packet.device.publicKey)
+    });
     saveState();
   }
 
@@ -981,7 +975,7 @@ function sendControl<T = unknown>(peerId: string, type: string, data: unknown, t
   const peer = getTrustedPeer(peerId);
   const envelope = createEnvelope(type, data);
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://${peer.address}:${peer.controlPort}`);
+    const ws = new WebSocket(`ws://${peer.address}:${peer.controlPort}`, { maxPayload: MAX_CONTROL_MESSAGE_BYTES });
     const timer = setTimeout(() => {
       ws.terminate();
       reject(new Error('远程设备响应超时：如果设备显示在线但无法控制，通常是目标电脑的 Windows 防火墙阻止了入站控制。请在目标电脑打开 Lan Control Hub 设置里的“修复防火墙”，或运行 lch firewall repair。'));
@@ -991,6 +985,7 @@ function sendControl<T = unknown>(peerId: string, type: string, data: unknown, t
       try {
         clearTimeout(timer);
         const payload = decryptEnvelope(JSON.parse(raw.toString()) as EncryptedEnvelope);
+        if (payload.fromId !== peer.id) throw new Error('响应设备身份不一致');
         if (payload.type !== 'response') throw new Error('响应类型无效');
         const body = payload.data as { ok: boolean; data?: T; error?: string };
         ws.close();
@@ -1132,7 +1127,7 @@ async function handleControlMessage(payload: { fromId: string; fromName: string;
 function startControlServer() {
   return new Promise<void>((resolve, reject) => {
     function listen(port: number) {
-      const server = new WebSocketServer({ host: '0.0.0.0', port });
+      const server = new WebSocketServer({ host: '0.0.0.0', port, maxPayload: MAX_CONTROL_MESSAGE_BYTES });
       server.on('connection', (ws) => {
         ws.once('message', async (raw) => {
           let response: { ok: boolean; data?: unknown; error?: string } = { ok: false, error: '未知错误' };
@@ -1777,11 +1772,7 @@ function uniqueDownloadPath(fileName: string) {
 }
 
 function receiveFile(peerId: string, peerName: string, file: any) {
-  const name = path.basename(String(file?.name || 'received-file'));
-  const base64 = String(file?.base64 || '');
-  const size = Number(file?.size || 0);
-  if (!name || !base64 || size > MAX_FILE_BYTES) throw new Error('文件无效或过大');
-  const buffer = Buffer.from(base64, 'base64');
+  const { name, buffer } = decodeFilePayload(file, MAX_FILE_BYTES);
   const filePath = uniqueDownloadPath(name);
   fs.writeFileSync(filePath, buffer);
   addConversationEvent(peerId, {
@@ -1846,14 +1837,6 @@ function existingShareRoots() {
   return roots;
 }
 
-function cleanSharedPath(relativePath = '') {
-  return String(relativePath || '')
-    .replace(/\\/g, '/')
-    .split('/')
-    .filter(Boolean)
-    .join('/');
-}
-
 function displaySharedPath(root: ShareRoot, relative = '') {
   return relative ? `${root.name}/${relative}` : root.name;
 }
@@ -1864,9 +1847,7 @@ function resolveSharedPath(relativePath = '') {
   const [rootId, ...parts] = cleanRelative.split('/');
   const root = existingShareRoots().find((item) => item.id === rootId);
   if (!root) throw new Error('共享目录不可用或未授权');
-  const target = path.resolve(root.path, ...parts);
-  const escaped = path.relative(root.path, target);
-  if (escaped.startsWith('..') || path.isAbsolute(escaped)) throw new Error('路径超出共享目录范围');
+  const { target } = resolveInsideRoot(root.path, parts);
   const relative = parts.join('/');
   const currentPath = [root.id, ...parts].join('/');
   return { root, target, relative, currentPath };
@@ -1953,11 +1934,7 @@ function uploadSharedFile(peerId: string, peerName: string, data: any) {
   const { target, currentPath } = resolveSharedPath(data?.relativePath || '');
   const stat = fs.statSync(target);
   if (!stat.isDirectory()) throw new Error('只能上传到文件夹');
-  const name = path.basename(String(data?.file?.name || 'received-file'));
-  const base64 = String(data?.file?.base64 || '');
-  const size = Number(data?.file?.size || 0);
-  if (!name || !base64 || size > MAX_FILE_BYTES) throw new Error('文件无效或过大');
-  const buffer = Buffer.from(base64, 'base64');
+  const { name, buffer } = decodeFilePayload(data?.file, MAX_FILE_BYTES);
   const filePath = uniqueFilePathInDirectory(target, name);
   fs.writeFileSync(filePath, buffer);
   addAudit('file.uploadShared', `${peerName} 上传 ${name}`, peerId, state.device.id);
@@ -1997,9 +1974,11 @@ function startWebServer() {
 function readJsonBody(req: http.IncomingMessage) {
   return new Promise<any>((resolve, reject) => {
     let raw = '';
+    let rawBytes = 0;
     req.on('data', (chunk) => {
+      rawBytes += Buffer.byteLength(chunk);
       raw += chunk.toString('utf8');
-      if (raw.length > 50 * 1024 * 1024) req.destroy(new Error('Body too large'));
+      if (rawBytes > MAX_LOCAL_API_BODY_BYTES) req.destroy(new Error('Body too large'));
     });
     req.on('end', () => {
       if (!raw) {
@@ -2095,31 +2074,29 @@ async function handleLocalApi(pathname: string, method: string, body: any) {
   }
   if (method === 'POST' && pathname === '/api/files/send') {
     assertPeerWritable(body.peerId);
-    if (!body.name || !body.base64) throw new Error('文件无效');
-    if (Number(body.size || 0) > MAX_FILE_BYTES) throw new Error('文件过大');
+    const file = decodeFilePayload(body, MAX_FILE_BYTES);
     await sendControl(body.peerId, 'file.send', {
-      name: path.basename(String(body.name)),
-      size: Number(body.size || 0),
+      name: file.name,
+      size: file.size,
       base64: String(body.base64)
     }, 60000);
     addConversationEvent(body.peerId, {
       direction: 'outgoing',
       type: 'file',
-      name: path.basename(String(body.name)),
-      size: Number(body.size || 0),
+      name: file.name,
+      size: file.size,
       senderName: state.device.name
     });
     return true;
   }
   if (method === 'POST' && pathname === '/api/files/put') {
     assertPeerWritable(body.peerId);
-    if (!body.name || !body.base64) throw new Error('文件无效');
-    if (Number(body.size || 0) > MAX_FILE_BYTES) throw new Error('文件过大');
+    const file = decodeFilePayload(body, MAX_FILE_BYTES);
     return sendControl(body.peerId, 'file.uploadShared', {
       relativePath: body.relativePath || '',
       file: {
-        name: path.basename(String(body.name)),
-        size: Number(body.size || 0),
+        name: file.name,
+        size: file.size,
         base64: String(body.base64)
       }
     }, 60000);
@@ -2189,9 +2166,12 @@ async function openRemoteTerminal(peerId: string) {
 }
 
 function loadRendererWindow(win: BrowserWindow, query: Record<string, string> = {}) {
-  const devUrl = process.env.ELECTRON_RENDERER_URL;
+  const devUrl = app.isPackaged ? '' : process.env.ELECTRON_RENDERER_URL;
   if (devUrl) {
     const url = new URL(devUrl);
+    if (!['localhost', '127.0.0.1', '::1'].includes(url.hostname)) {
+      throw new Error('开发渲染器地址只能使用 localhost');
+    }
     for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
     win.loadURL(url.toString());
   } else {
@@ -2360,18 +2340,17 @@ function registerIpc() {
   });
   ipcMain.handle('lch:send-file', async (_event, peerId, file) => {
     assertPeerWritable(peerId);
-    if (!file?.name || !file?.base64) throw new Error('文件无效');
-    if (Number(file.size || 0) > MAX_FILE_BYTES) throw new Error('文件过大');
+    const decoded = decodeFilePayload(file, MAX_FILE_BYTES);
     await sendControl(peerId, 'file.send', {
-      name: path.basename(String(file.name)),
-      size: Number(file.size || 0),
+      name: decoded.name,
+      size: decoded.size,
       base64: String(file.base64)
     }, 60000);
     addConversationEvent(peerId, {
       direction: 'outgoing',
       type: 'file',
-      name: path.basename(String(file.name)),
-      size: Number(file.size || 0),
+      name: decoded.name,
+      size: decoded.size,
       senderName: state.device.name
     });
     return appStateView();
@@ -2381,14 +2360,15 @@ function registerIpc() {
   ));
   ipcMain.handle('lch:download-shared-file', async (_event, peerId, relativePath) => {
     const remoteFile = await sendControl<any>(peerId, 'file.downloadShared', { relativePath }, 60000);
-    const fileName = path.basename(String(remoteFile.name || 'download'));
+    const decoded = decodeFilePayload(remoteFile, MAX_FILE_BYTES);
+    const fileName = decoded.name;
     const filePath = uniqueDownloadPath(fileName);
-    fs.writeFileSync(filePath, Buffer.from(String(remoteFile.base64 || ''), 'base64'));
+    fs.writeFileSync(filePath, decoded.buffer);
     addConversationEvent(peerId, {
       direction: 'incoming',
       type: 'file',
       name: fileName,
-      size: Number(remoteFile.size || 0),
+      size: decoded.size,
       path: filePath,
       senderName: state.trustedDevices[peerId]?.name || '远程设备'
     });
@@ -2396,13 +2376,12 @@ function registerIpc() {
   });
   ipcMain.handle('lch:upload-shared-file', async (_event, peerId, relativePath, file) => {
     assertPeerWritable(peerId);
-    if (!file?.name || !file?.base64) throw new Error('文件无效');
-    if (Number(file.size || 0) > MAX_FILE_BYTES) throw new Error('文件过大');
+    const decoded = decodeFilePayload(file, MAX_FILE_BYTES);
     return sendControl(peerId, 'file.uploadShared', {
       relativePath,
       file: {
-        name: path.basename(String(file.name)),
-        size: Number(file.size || 0),
+        name: decoded.name,
+        size: decoded.size,
         base64: String(file.base64)
       }
     }, 60000);

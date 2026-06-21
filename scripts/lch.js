@@ -6,6 +6,8 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { spawnSync } = require('node:child_process');
 
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
+
 function configPath() {
   if (process.env.LCH_LOCAL_API_CONFIG) return process.env.LCH_LOCAL_API_CONFIG;
   const names = ['lan-control-hub', 'Lan Control Hub', 'Electron'];
@@ -574,6 +576,7 @@ async function fileCommand(args) {
   if (!localPath || !fs.existsSync(localPath)) throw new Error('Missing existing local file path');
   const stat = fs.statSync(localPath);
   if (!stat.isFile()) throw new Error('Local path is not a file');
+  if (stat.size > MAX_FILE_BYTES) throw new Error('File is too large; current single-file limit is 100 MB');
   await request('POST', '/api/files/send', {
     peerId,
     name: path.basename(localPath),
@@ -779,7 +782,19 @@ async function main() {
   throw new Error(`Unknown command: ${cmd}`);
 }
 
-main().catch((err) => {
-  console.error(err.message || err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err.message || err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  matchDevice,
+  normalizeRef,
+  parseBoolean,
+  parsePointInput,
+  splitHotkey,
+  takeFlag,
+  takeOption
+};

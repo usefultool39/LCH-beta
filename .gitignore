@@ -9,3 +9,5 @@ Thumbs.db
 /lch-screenshot-*.png
 /*.mp4
 /*.png
+/SHA256SUMS.txt
+/release-notes.md

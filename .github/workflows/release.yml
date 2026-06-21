@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to rebuild, for example v0.2.3"
+        description: "Release tag to rebuild, for example v0.3.0"
         required: true
         type: string
 
@@ -15,9 +15,24 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Validate package, app, tag, and README
+        run: node scripts/release-info.js validate --tag "$RELEASE_TAG"
+
   build-windows:
     name: Build Windows
     runs-on: windows-latest
+    needs: validate
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,6 +51,9 @@ jobs:
       - name: Package Windows
         run: npm run package:win
 
+      - name: Validate Windows artifact names
+        run: node scripts/release-info.js validate-artifacts release --platform windows
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -47,6 +65,7 @@ jobs:
   build-macos:
     name: Build macOS (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +94,9 @@ jobs:
       - name: Package macOS
         run: npm run ${{ matrix.script }}
 
+      - name: Validate macOS artifact name
+        run: node scripts/release-info.js validate-artifacts release --platform macos-${{ matrix.arch }}
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -86,23 +108,37 @@ jobs:
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     needs:
       - build-windows
       - build-macos
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      - name: Generate checksums and release notes
+        run: |
+          node scripts/release-info.js checksums artifacts SHA256SUMS.txt
+          node scripts/release-info.js release-notes --tag "$RELEASE_TAG" > release-notes.md
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          name: Lan Control Hub ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Lan Control Hub ${{ env.RELEASE_TAG }}
+          body_path: release-notes.md
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
           files: |
             artifacts/**/*.exe
             artifacts/**/*.zip
+            SHA256SUMS.txt

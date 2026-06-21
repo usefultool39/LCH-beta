@@ -37,6 +37,7 @@ import {
   Trash2,
   Upload
 } from 'lucide-react';
+import { MAX_FILE_BYTES } from '../shared/protocol';
 import type { AppStateView, DevicePreference, FirewallStatus, PeerInfo, RemoteInputEvent, RemoteOpenResult, RemoteSessionRecord, SharedFolderListing, TaskRecord, TerminalOutputEvent } from '../shared/protocol';
 import './styles.css';
 
@@ -130,6 +131,9 @@ function parentPath(relativePath = '') {
 }
 
 function readFileAsBase64(file: File) {
+  if (file.size > MAX_FILE_BYTES) {
+    throw new Error('文件过大，当前单文件上限为 100 MB');
+  }
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {

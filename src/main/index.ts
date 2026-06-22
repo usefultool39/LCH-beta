@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard as electronClipboard, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, screen as electronScreen, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard as electronClipboard, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, Notification, screen as electronScreen, session, shell } from 'electron';
 import crypto from 'node:crypto';
 import dgram from 'node:dgram';
 import fs from 'node:fs';
@@ -78,6 +78,7 @@ type AppState = {
   fileShareEnabled: boolean;
   autoTrustDevices: boolean;
   localApiToken: string;
+  manualPeerAddresses: string[];
 };
 
 type TerminalSession = {
@@ -364,7 +365,8 @@ function createDefaultState(): AppState {
     sharedFolder: '',
     fileShareEnabled: true,
     autoTrustDevices: false,
-    localApiToken: base64url(crypto.randomBytes(32))
+    localApiToken: base64url(crypto.randomBytes(32)),
+    manualPeerAddresses: []
   };
 }
 
@@ -407,7 +409,10 @@ function loadState(): AppState {
         sharedFolder: parsed.sharedFolder || '',
         fileShareEnabled: (parsed as any).fileShareEnabled !== false,
         autoTrustDevices: Boolean((parsed as any).autoTrustDevices),
-        localApiToken: parsed.localApiToken || base64url(crypto.randomBytes(32))
+        localApiToken: parsed.localApiToken || base64url(crypto.randomBytes(32)),
+        manualPeerAddresses: Array.isArray((parsed as any).manualPeerAddresses)
+          ? (parsed as any).manualPeerAddresses.map(String).slice(0, 100)
+          : []
       };
     }
   } catch {
@@ -467,6 +472,29 @@ function getJson<T>(url: string): Promise<T> {
     req.setTimeout(12000, () => {
       req.destroy(new Error('检查更新超时'));
     });
+    req.on('error', reject);
+  });
+}
+
+function getHttpJson<T>(url: string, timeoutMs = 5000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, (res) => {
+      let raw = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { raw += chunk; });
+      res.on('end', () => {
+        if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`HTTP ${res.statusCode || 0}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(raw));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('连接超时')));
     req.on('error', reject);
   });
 }
@@ -631,6 +659,7 @@ function appStateView() {
     sharedFolder: state.sharedFolder,
     fileShareEnabled: state.fileShareEnabled,
     autoTrustDevices: state.autoTrustDevices,
+    manualPeerAddresses: state.manualPeerAddresses,
     networkInfo: networkInfo()
   };
 }
@@ -763,19 +792,69 @@ function markDeviceOpened(peerId: string, mode: 'open' | 'control' = 'open') {
   emitState();
 }
 
+function shouldShowIncomingNotification() {
+  if (HEADLESS || !Notification.isSupported()) return false;
+  if (!mainWindow || mainWindow.isDestroyed()) return true;
+  return !mainWindow.isFocused() || mainWindow.isMinimized() || !mainWindow.isVisible();
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function notifyConversationEvent(peerId: string, event: any) {
+  if (!shouldShowIncomingNotification()) return;
+  const sender = event.senderName || peerDisplayName(peerId, '远程设备');
+  const isFile = event.type === 'file';
+  const title = isFile ? `${sender} 发来文件` : `${sender} 发来消息`;
+  const body = isFile
+    ? `${event.name || '文件'}${event.size ? ` · ${formatBytesForNotification(event.size)}` : ''}`
+    : String(event.text || '').slice(0, 160) || '新消息';
+  try {
+    const notification = new Notification({
+      title,
+      body,
+      silent: false,
+      icon: path.join(__dirname, '../../build/icon.png')
+    });
+    notification.on('click', focusMainWindow);
+    notification.show();
+  } catch (error) {
+    logRuntimeError('notification', error);
+  }
+  try {
+    mainWindow?.flashFrame(true);
+    setTimeout(() => mainWindow?.flashFrame(false), 5000);
+  } catch {
+    // Some platforms ignore flashFrame.
+  }
+}
+
+function formatBytesForNotification(size = 0) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 function addConversationEvent(peerId: string, event: any) {
+  const { notify, ...storedEvent } = event || {};
   if (!state.conversations[peerId]) state.conversations[peerId] = [];
   state.conversations[peerId].push({
     id: crypto.randomUUID(),
     peerId,
     createdAt: Date.now(),
-    ...event
+    ...storedEvent
   });
   if (state.conversations[peerId].length > MAX_CONVERSATION_EVENTS) {
     state.conversations[peerId].splice(0, state.conversations[peerId].length - MAX_CONVERSATION_EVENTS);
   }
   saveState();
   emitState();
+  if (storedEvent.direction === 'incoming' && notify !== false) notifyConversationEvent(peerId, storedEvent);
 }
 
 function ensureHome() {
@@ -1005,6 +1084,56 @@ function broadcastPresence() {
   for (const address of broadcastAddresses()) {
     discoverySocket.send(packet, 0, packet.length, DISCOVERY_PORT, address);
   }
+  refreshManualPeers().catch((error) => logRuntimeError('manual-peer-refresh', error));
+}
+
+function manualPeerCandidates(address: string) {
+  const raw = String(address || '').trim();
+  if (!raw) throw new Error('请输入远程地址，例如 100.64.1.2 或 100.64.1.2:46882');
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+  const parsed = new URL(withScheme);
+  if (parsed.protocol !== 'http:') throw new Error('远程地址只支持 http/Tailscale IP，不要直接暴露到公网 https');
+  if (parsed.port) return [{ url: `${parsed.protocol}//${parsed.host}/api/presence`, host: parsed.hostname, label: parsed.host }];
+  const output = [];
+  for (let port = DEFAULT_WEB_PORT; port <= DEFAULT_WEB_PORT + 30; port += 1) {
+    output.push({ url: `${parsed.protocol}//${parsed.hostname}:${port}/api/presence`, host: parsed.hostname, label: `${parsed.hostname}:${port}` });
+  }
+  return output;
+}
+
+async function probeManualPeer(address: string) {
+  ensureHome();
+  let lastError: unknown = null;
+  for (const candidate of manualPeerCandidates(address)) {
+    try {
+      const packet = await getHttpJson<DiscoveryPacket>(candidate.url, 3500);
+      if (!isDiscoveryPacket(packet)) throw new Error('远程设备返回的信息格式无效');
+      if (!state.home || packet.homeId !== state.home.id) throw new Error('远程设备不在当前家庭网络，请确认加入密钥一致');
+      if (packet.device.id === state.device.id) throw new Error('不能添加本机地址');
+      rememberPeer(packet, candidate.host);
+      return { packet, address: candidate.label };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('无法连接远程设备');
+}
+
+async function connectManualPeer(address: string) {
+  const result = await probeManualPeer(address);
+  if (!state.manualPeerAddresses.includes(result.address)) {
+    state.manualPeerAddresses.push(result.address);
+    state.manualPeerAddresses = state.manualPeerAddresses.slice(-100);
+  }
+  saveState();
+  emitState();
+  return appStateView();
+}
+
+async function refreshManualPeers() {
+  if (!state?.home || !state.manualPeerAddresses.length) return;
+  await Promise.allSettled(state.manualPeerAddresses.map((address) => probeManualPeer(address)));
+  emitState();
 }
 
 function startDiscovery() {
@@ -2110,7 +2239,8 @@ async function downloadRemoteSharedFile(peerId: string, relativePath: string) {
     name: token.name,
     size: token.size,
     path: filePath,
-    senderName: state.trustedDevices[peerId]?.name || '远程设备'
+    senderName: state.trustedDevices[peerId]?.name || '远程设备',
+    notify: false
   });
   addAudit('file.downloadShared', token.name, peerId, state.device.id);
   return { filePath, name: token.name, size: token.size };
@@ -2210,6 +2340,15 @@ function startWebServer() {
     function listen(port: number) {
       const server = http.createServer((req, res) => {
         const url = new URL(req.url || '/', `http://127.0.0.1:${port}`);
+        if (req.method === 'GET' && url.pathname === '/api/presence') {
+          const packet = localAnnouncement();
+          if (!packet) {
+            sendJson(res, 404, { ok: false, error: 'Not joined to a home network' });
+            return;
+          }
+          sendJson(res, 200, packet);
+          return;
+        }
         const tokenMatch = /^\/api\/files\/download\/([^/]+)\/?/.exec(url.pathname);
         if ((req.method === 'GET' || req.method === 'HEAD') && tokenMatch) {
           streamSharedDownload(req, res, decodeURIComponent(tokenMatch[1]));
@@ -2579,6 +2718,7 @@ function registerIpc() {
   ipcMain.handle('lch:update-device-preference', (_event, peerId, patch) => updateDevicePreference(peerId, patch || {}));
   ipcMain.handle('lch:set-file-sharing', (_event, enabled) => setFileSharing(Boolean(enabled)));
   ipcMain.handle('lch:set-auto-trust', (_event, enabled) => setAutoTrustDevices(Boolean(enabled)));
+  ipcMain.handle('lch:connect-manual-peer', (_event, address) => connectManualPeer(address));
   ipcMain.handle('lch:trust-device', (_event, peerId) => trustDevice(peerId));
   ipcMain.handle('lch:revoke-device', (_event, peerId) => revokeTrustedDevice(peerId));
   ipcMain.handle('lch:choose-shared-folder', async () => {
@@ -2695,6 +2835,10 @@ function registerIpc() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('local.lan-control-hub.app');
+  }
+
   app.on('second-instance', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();

@@ -1263,6 +1263,7 @@ textarea:focus {
 
 .settingsIdentity,
 .settingsUpdate,
+.settingsExternal,
 .settingsApi,
 .firewallPanel {
   grid-column: 1;
@@ -1335,6 +1336,22 @@ textarea:focus {
 .updateBox span {
   color: #64748b;
   font-size: 12px;
+}
+
+.manualPeerList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.manualPeerList span {
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: #315074;
+  background: #edf4ff;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .empty {
@@ -1749,6 +1766,7 @@ textarea:focus {
   .settingsTrusted,
   .settingsIdentity,
   .settingsUpdate,
+  .settingsExternal,
   .settingsApi,
   .firewallPanel {
     grid-column: auto;

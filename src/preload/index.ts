@@ -13,6 +13,7 @@ const api = {
   updateDevicePreference: (peerId: string, patch: unknown) => ipcRenderer.invoke('lch:update-device-preference', peerId, patch),
   setFileSharing: (enabled: boolean) => ipcRenderer.invoke('lch:set-file-sharing', enabled),
   setAutoTrust: (enabled: boolean) => ipcRenderer.invoke('lch:set-auto-trust', enabled),
+  connectManualPeer: (address: string) => ipcRenderer.invoke('lch:connect-manual-peer', address),
   trustDevice: (peerId: string) => ipcRenderer.invoke('lch:trust-device', peerId),
   revokeDevice: (peerId: string) => ipcRenderer.invoke('lch:revoke-device', peerId),
   chooseSharedFolder: () => ipcRenderer.invoke('lch:choose-shared-folder'),

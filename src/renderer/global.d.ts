@@ -15,6 +15,7 @@ declare global {
       updateDevicePreference: (peerId: string, patch: Partial<DevicePreference>) => Promise<AppStateView>;
       setFileSharing: (enabled: boolean) => Promise<AppStateView>;
       setAutoTrust: (enabled: boolean) => Promise<AppStateView>;
+      connectManualPeer: (address: string) => Promise<AppStateView>;
       trustDevice: (peerId: string) => Promise<AppStateView>;
       revokeDevice: (peerId: string) => Promise<AppStateView>;
       chooseSharedFolder: () => Promise<AppStateView>;

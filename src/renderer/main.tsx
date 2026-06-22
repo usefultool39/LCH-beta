@@ -873,16 +873,20 @@ function SettingsView({
   state,
   onUpdateName,
   onSetAutoTrust,
+  onConnectManualPeer,
   onTrustDevice,
   onRevokeDevice
 }: {
   state: AppStateView;
   onUpdateName: (name: string) => void;
   onSetAutoTrust: (enabled: boolean) => void;
+  onConnectManualPeer: (address: string) => Promise<unknown> | void;
   onTrustDevice: (peerId: string) => void;
   onRevokeDevice: (peerId: string) => void;
 }) {
   const [name, setName] = useState(state.device.name);
+  const [manualAddress, setManualAddress] = useState('');
+  const [manualBusy, setManualBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [secretVisible, setSecretVisible] = useState(false);
   const [firewall, setFirewall] = useState<FirewallStatus | null>(null);
@@ -910,6 +914,17 @@ function SettingsView({
       setUpdateInfo(await api.checkUpdates());
     } finally {
       setUpdateBusy(false);
+    }
+  }
+  async function connectManualAddress() {
+    const address = manualAddress.trim();
+    if (!address) return;
+    setManualBusy(true);
+    try {
+      await onConnectManualPeer(address);
+      setManualAddress('');
+    } finally {
+      setManualBusy(false);
     }
   }
   return (
@@ -1010,6 +1025,19 @@ function SettingsView({
             <button className="secondary" disabled={updateBusy} onClick={checkUpdates}><RefreshCw size={16} /> {updateBusy ? '检查中' : '检查更新'}</button>
             <button className="primary" onClick={() => api.openLatestRelease()}><Download size={16} /> 打开下载页</button>
           </div>
+        </section>
+        <section className="panel settingsExternal">
+          <h2>外网 / Tailscale 连接</h2>
+          <p>先让两台电脑加入同一个 Tailscale、ZeroTier 或 WireGuard 网络，并使用同一个加入密钥。这里填对方虚拟 IP，例如 100.x.x.x；如果对方 Web 端口不是默认值，也可以填 100.x.x.x:46882。</p>
+          <div className="inlineEdit">
+            <input value={manualAddress} onChange={(event) => setManualAddress(event.target.value)} placeholder="100.x.x.x 或 100.x.x.x:46882" />
+            <button className="primary" disabled={manualBusy || !manualAddress.trim()} onClick={connectManualAddress}>{manualBusy ? '连接中' : '连接'}</button>
+          </div>
+          {state.manualPeerAddresses?.length ? (
+            <div className="manualPeerList">
+              {state.manualPeerAddresses.map((address) => <span key={address}>{address}</span>)}
+            </div>
+          ) : <p>还没有手动添加的远程地址。</p>}
         </section>
         <section className="panel settingsApi">
           <h2>Local API</h2>
@@ -1758,6 +1786,7 @@ function App() {
           state={state}
           onUpdateName={(name) => run(() => api.updateName(name))}
           onSetAutoTrust={(enabled) => run(() => api.setAutoTrust(enabled))}
+          onConnectManualPeer={(address) => run(() => api.connectManualPeer(address))}
           onTrustDevice={(peerId) => run(() => api.trustDevice(peerId))}
           onRevokeDevice={(peerId) => run(() => api.revokeDevice(peerId))}
         />

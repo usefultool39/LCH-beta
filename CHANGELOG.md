@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.1
+
+- Add system notifications and taskbar flashing for incoming chat messages and pushed files when the main window is not focused.
+- Keep locally initiated remote downloads quiet so the app does not notify for files the user explicitly downloaded.
+- Add manual remote address connection for Tailscale, ZeroTier, WireGuard, and similar VPN overlays where LAN broadcast discovery does not cross networks.
+- Expose a public `/api/presence` endpoint with device discovery metadata only, while keeping control traffic on the existing trusted encrypted channel.
+- Persist manually added remote addresses and refresh them alongside LAN discovery.
+
 ## v0.4.0
 
 - Add token-based streaming downloads for shared files up to 20 GB, avoiding the previous 100 MB base64 download path for file-library downloads.

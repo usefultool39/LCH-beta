@@ -1,5 +1,5 @@
 export const APP_NAME = 'Lan Control Hub';
-export const APP_VERSION = '0.4.0';
+export const APP_VERSION = '0.4.1';
 
 export const DISCOVERY_PORT = 46880;
 export const DEFAULT_CONTROL_PORT = 46881;
@@ -216,6 +216,7 @@ export interface AppStateView {
   sharedFolder: string;
   fileShareEnabled: boolean;
   autoTrustDevices: boolean;
+  manualPeerAddresses: string[];
   networkInfo: NetworkInfo;
 }
 

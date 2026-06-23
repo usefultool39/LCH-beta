@@ -1,6 +1,6 @@
 {
   "name": "lan-control-hub",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Windows/macOS LAN device control hub for chat, files, commands, terminals, and screen view.",
   "author": "usefultool39",
   "main": "dist/main/index.js",

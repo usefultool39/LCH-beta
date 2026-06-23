@@ -687,12 +687,13 @@ function renderMessageMarkdown(text = '') {
   return <div className="messageMarkdown">{blocks}</div>;
 }
 
-function ChatView({ state, conversation, messages, onSelectConversation, onCreateGroup, onSendText, onSendFile, onReact }: {
+function ChatView({ state, conversation, messages, onSelectConversation, onCreateGroup, onUpdateGroup, onSendText, onSendFile, onReact }: {
   state: AppStateView;
   conversation: ConversationRecord | null;
   messages: any[];
   onSelectConversation: (conversationId: string) => void;
   onCreateGroup: (title: string, memberIds: string[]) => void;
+  onUpdateGroup: (conversationId: string, title: string, memberIds: string[]) => void;
   onSendText: (text: string, options?: { replyTo?: ReturnType<typeof replyRefFromMessage> }) => void;
   onSendFile: (file: File) => void;
   onReact: (messageId: string, emoji: string) => void;
@@ -703,6 +704,9 @@ function ChatView({ state, conversation, messages, onSelectConversation, onCreat
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [groupTitle, setGroupTitle] = useState('');
   const [groupMemberIds, setGroupMemberIds] = useState<string[]>([]);
+  const [editingGroup, setEditingGroup] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editMemberIds, setEditMemberIds] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const conversations = useMemo(() => buildConversationList(state), [state]);
   const directConversations = conversations.filter((item) => item.kind === 'direct');
@@ -714,10 +718,36 @@ function ChatView({ state, conversation, messages, onSelectConversation, onCreat
   useEffect(() => {
     setReplyTo(null);
     setQuery('');
+    setEditingGroup(false);
   }, [conversation?.id]);
 
   function toggleGroupMember(peerId: string) {
     setGroupMemberIds((current) => current.includes(peerId) ? current.filter((id) => id !== peerId) : [...current, peerId]);
+  }
+
+  function toggleEditMember(peerId: string) {
+    setEditMemberIds((current) => current.includes(peerId) ? current.filter((id) => id !== peerId) : [...current, peerId]);
+  }
+
+  function beginEditGroup() {
+    if (!conversation || conversation.kind !== 'group') return;
+    setEditTitle(conversation.title || '');
+    setEditMemberIds(conversation.memberIds.filter((id) => id !== state.device.id));
+    setEditingGroup(true);
+  }
+
+  function renderMemberPicker(memberIds: string[], onToggle: (peerId: string) => void) {
+    const ids = Array.from(new Set([...state.peers.map((peer) => peer.id), ...memberIds]));
+    return ids.length ? ids.map((peerId) => {
+      const peer = state.peers.find((item) => item.id === peerId);
+      return (
+        <label key={peerId}>
+          <input type="checkbox" checked={memberIds.includes(peerId)} onChange={() => onToggle(peerId)} />
+          <span>{peer ? peerLabel(peer) : peerLabelById(state, peerId)}</span>
+          <small>{peer ? statusText(peer) : '离线成员'}</small>
+        </label>
+      );
+    }) : <span className="empty small">暂无可选设备</span>;
   }
 
   function renderConversationRows(items: ConversationRecord[]) {
@@ -751,13 +781,7 @@ function ChatView({ state, conversation, messages, onSelectConversation, onCreat
           <div className="groupDraftBox">
             <input value={groupTitle} onChange={(event) => setGroupTitle(event.target.value)} placeholder="群组名称" />
             <div className="groupMemberList">
-              {state.peers.length ? state.peers.map((peer) => (
-                <label key={peer.id}>
-                  <input type="checkbox" checked={groupMemberIds.includes(peer.id)} onChange={() => toggleGroupMember(peer.id)} />
-                  <span>{peerLabel(peer)}</span>
-                  <small>{statusText(peer)}</small>
-                </label>
-              )) : <span className="empty small">暂无可选设备</span>}
+              {renderMemberPicker(groupMemberIds, toggleGroupMember)}
             </div>
             <div className="rowActions">
               <button className="primary" disabled={!groupMemberIds.length} onClick={() => {
@@ -785,8 +809,26 @@ function ChatView({ state, conversation, messages, onSelectConversation, onCreat
             <h1>{conversation ? conversationTitle(conversation, state) : '聊天'}</h1>
             <p>{conversation ? conversationSubtitle(conversation, state) : '选择一个会话开始聊天，或从左侧新建群组。'}</p>
           </div>
-          {conversation ? <span className={`statusPill ${canSend ? 'online' : 'offline'}`}>{canSend ? '可发送' : '不可发送'}</span> : null}
+          <div className="chatHeaderActions">
+            {conversation?.kind === 'group' ? <button className="secondary" onClick={beginEditGroup}><Settings size={15} /> 管理</button> : null}
+            {conversation ? <span className={`statusPill ${canSend ? 'online' : 'offline'}`}>{canSend ? '可发送' : '不可发送'}</span> : null}
+          </div>
         </header>
+        {editingGroup && conversation?.kind === 'group' ? (
+          <div className="groupDraftBox groupEditorBox">
+            <input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} placeholder="群组名称" />
+            <div className="groupMemberList">
+              {renderMemberPicker(editMemberIds, toggleEditMember)}
+            </div>
+            <div className="rowActions">
+              <button className="primary" disabled={!editMemberIds.length} onClick={() => {
+                onUpdateGroup(conversation.id, editTitle, editMemberIds);
+                setEditingGroup(false);
+              }}><Users size={15} /> 保存</button>
+              <button className="secondary" onClick={() => setEditingGroup(false)}>取消</button>
+            </div>
+          </div>
+        ) : null}
         <div className="chatToolbar">
           <Search size={16} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索消息、文件或引用" />
@@ -2458,6 +2500,7 @@ function App() {
             setSelectedConversationId(conversationId);
             run(() => api.createConversation({ id: conversationId, title, memberIds, kind: 'group' }));
           }}
+          onUpdateGroup={(id, title, memberIds) => run(() => api.updateConversation({ id, title, memberIds }))}
           onSendText={(text, options) => selectedConversation && run(() => api.sendConversationText(selectedConversation.id, text, options))}
           onSendFile={(file) => selectedConversation && run(async () => {
             const base64 = await readFileAsBase64(file);

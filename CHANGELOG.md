@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.12.0
+
+- Add group conversation editing for title and member list from the chat view.
+- Add a `conversation.upsert` control message so group metadata can sync independently from chat text and file messages.
+- Broadcast group metadata changes best-effort to current and previous members while keeping offline devices compatible through later message metadata.
+- Add shared sync-payload tests and document the current group management workflow.
+
 ## v0.11.0
 
 - Add group file sending from the chat composer by delivering the existing encrypted `file.send` payload to each group member.

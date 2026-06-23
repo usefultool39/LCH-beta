@@ -24,3 +24,16 @@ export function conversationMessageMetadata(record: Pick<ConversationRecord, 'id
     memberIds
   };
 }
+
+export function conversationRecordSyncPayload(record: Pick<ConversationRecord, 'id' | 'kind' | 'title' | 'memberIds' | 'createdAt' | 'updatedAt' | 'lastMessageAt' | 'createdByDeviceId'>, localDeviceId: string) {
+  return {
+    id: record.id,
+    kind: record.kind,
+    title: record.title || '',
+    memberIds: uniqueConversationMemberIds([localDeviceId, ...(record.memberIds || [])]),
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    lastMessageAt: record.lastMessageAt,
+    createdByDeviceId: record.createdByDeviceId
+  };
+}

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   conversationMessageMetadata,
+  conversationRecordSyncPayload,
   conversationRecipientIds,
   directConversationPeerId,
   uniqueConversationMemberIds
@@ -38,4 +39,36 @@ test('conversationMessageMetadata includes normalized member ids for group paylo
     conversationTitle: 'Team',
     memberIds: ['local', 'peer-1', 'peer-2']
   });
+});
+
+test('conversationRecordSyncPayload preserves conversation metadata for sync messages', () => {
+  assert.deepEqual(conversationRecordSyncPayload({
+    id: 'conv:team',
+    kind: 'group',
+    title: 'Team',
+    memberIds: ['peer-1', 'peer-2', 'peer-1'],
+    createdAt: 100,
+    updatedAt: 200,
+    lastMessageAt: 180,
+    createdByDeviceId: 'local'
+  }, 'local'), {
+    id: 'conv:team',
+    kind: 'group',
+    title: 'Team',
+    memberIds: ['local', 'peer-1', 'peer-2'],
+    createdAt: 100,
+    updatedAt: 200,
+    lastMessageAt: 180,
+    createdByDeviceId: 'local'
+  });
+});
+
+test('conversationRecordSyncPayload uses empty title to sync cleared group names', () => {
+  assert.equal(conversationRecordSyncPayload({
+    id: 'conv:team',
+    kind: 'group',
+    memberIds: ['peer-1'],
+    createdAt: 100,
+    updatedAt: 200
+  }, 'local').title, '');
 });

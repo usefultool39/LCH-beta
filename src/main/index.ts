@@ -60,7 +60,7 @@ import {
 } from '../shared/protocol';
 import { decodeFilePayload } from '../shared/file-transfer';
 import { cleanSharedPath, resolveInsideRoot } from '../shared/shared-paths';
-import { conversationMessageMetadata, conversationRecipientIds, directConversationPeerId } from '../shared/conversations';
+import { conversationMessageMetadata, conversationRecipientIds, conversationRecordSyncPayload, directConversationPeerId } from '../shared/conversations';
 import { ControlReplayGuard } from '../shared/security';
 import { blockedDeviceFromTrust, isDeviceBlocked, isDeviceTrusted, trustedDeviceFromPeer } from '../shared/trust';
 import { migrateState, normalizeWebRtcConfig, type PersistedAppState } from '../shared/state-migration';
@@ -970,6 +970,50 @@ function touchConversationRecord(conversationId: string, peerId: string, event: 
   });
 }
 
+function conversationSyncRecipientIds(record: ConversationRecord, extraMemberIds: unknown[] = []) {
+  return conversationRecipientIds({
+    memberIds: uniqueDeviceIds([...(record.memberIds || []), ...extraMemberIds])
+  }, state.device.id);
+}
+
+function syncConversationRecord(record: ConversationRecord, extraMemberIds: unknown[] = []) {
+  if (record.kind !== 'group') return;
+  const payload = {
+    record: conversationRecordSyncPayload(record, state.device.id)
+  };
+  for (const peerId of conversationSyncRecipientIds(record, extraMemberIds)) {
+    sendControl(peerId, 'conversation.upsert', payload).catch((error) => logRuntimeError('conversation-sync', error));
+  }
+}
+
+function applyConversationRecordSync(value: any, actorId: string) {
+  const raw = value?.record || value;
+  const id = String(raw?.id || '').trim();
+  if (!id) throw new Error('会话同步缺少 ID');
+  const kind = raw.kind === 'group' ? 'group' as const : 'direct' as const;
+  const existing = state.conversationRecords[id];
+  const updatedAt = Number(raw.updatedAt || Date.now());
+  if (existing?.updatedAt && existing.updatedAt > updatedAt) return existing;
+  const memberIds = uniqueDeviceIds([
+    state.device.id,
+    actorId,
+    ...(Array.isArray(raw.memberIds) ? raw.memberIds : [])
+  ]);
+  const record = ensureConversationRecord(id, {
+    kind,
+    title: raw.title !== undefined ? String(raw.title || '').trim().slice(0, 120) : undefined,
+    memberIds,
+    createdAt: Number(raw.createdAt || existing?.createdAt || updatedAt),
+    updatedAt,
+    lastMessageAt: raw.lastMessageAt ? Number(raw.lastMessageAt) : existing?.lastMessageAt,
+    createdByDeviceId: raw.createdByDeviceId ? String(raw.createdByDeviceId) : actorId
+  });
+  if (!state.conversations[record.id]) state.conversations[record.id] = [];
+  saveState();
+  emitState();
+  return record;
+}
+
 function applyConversationReaction(conversationId: string, messageId: string, emoji: string, actorId: string) {
   const cleanEmoji = CHAT_REACTION_EMOJIS.includes(emoji as any) ? emoji : '';
   const cleanConversationId = String(conversationId || '').trim();
@@ -1215,6 +1259,32 @@ function createLocalConversation(data: any = {}) {
   addAudit('conversation.create', kind === 'group' ? `创建群组会话 ${record.title || record.id}` : `创建直接会话 ${record.id}`);
   saveState();
   emitState();
+  syncConversationRecord(record);
+  return record;
+}
+
+function updateLocalConversation(data: any = {}) {
+  const id = String(data.conversationId || data.id || '').trim();
+  if (!id) throw new Error('会话 ID 不能为空');
+  const existing = state.conversationRecords[id];
+  if (!existing) throw new Error('会话不存在');
+  if (existing.kind !== 'group') throw new Error('只能编辑群组会话');
+  const previousMemberIds = existing.memberIds || [];
+  const rawMemberIds = Array.isArray(data.memberIds) ? data.memberIds : previousMemberIds;
+  const memberIds = uniqueDeviceIds([state.device.id, ...rawMemberIds]);
+  if (memberIds.length < 2) throw new Error('群组至少需要 2 个成员');
+  const record = ensureConversationRecord(id, {
+    kind: 'group',
+    title: data.title !== undefined ? String(data.title || '').trim().slice(0, 120) : existing.title,
+    memberIds,
+    createdByDeviceId: existing.createdByDeviceId || state.device.id,
+    updatedAt: Date.now()
+  });
+  if (!state.conversations[record.id]) state.conversations[record.id] = [];
+  addAudit('conversation.update', `更新群组会话 ${record.title || record.id}`);
+  saveState();
+  emitState();
+  syncConversationRecord(record, previousMemberIds);
   return record;
 }
 
@@ -1627,6 +1697,13 @@ function sendControl<T = unknown>(peerId: string, type: string, data: unknown, t
 
 async function handleControlMessage(payload: { fromId: string; fromName: string; type: string; data: any }) {
   switch (payload.type) {
+    case 'conversation.upsert':
+      {
+        const record = applyConversationRecordSync(payload.data || {}, payload.fromId);
+        addAudit('conversation.upsert', `收到会话同步 ${record.title || record.id}`, payload.fromId, state.device.id);
+      }
+      return { ok: true, data: appStateView() };
+
     case 'chat.send':
       {
         const message = createChatMessage(String(payload.data?.text || ''), payload.data || {});
@@ -3239,6 +3316,7 @@ async function handleLocalApi(pathname: string, method: string, body: any) {
   if (method === 'GET' && pathname === '/api/transfers') return state.transfers.slice(0, MAX_TRANSFER_RECORDS);
   if (method === 'GET' && pathname === '/api/conversations') return Object.values(state.conversationRecords);
   if (method === 'POST' && pathname === '/api/conversations/create') return createLocalConversation(body);
+  if (method === 'POST' && pathname === '/api/conversations/update') return updateLocalConversation(body);
   if (method === 'POST' && pathname === '/api/conversations/send') return sendConversationText(body.conversationId || body.id, body.text, body);
   if (method === 'POST' && pathname === '/api/conversations/send-file') return sendConversationFile(body.conversationId || body.id, body);
   if (method === 'POST' && pathname === '/api/transfers/cancel') return cancelTransfer(body.transferId || body.id);
@@ -3580,6 +3658,10 @@ function registerIpc() {
   ipcMain.handle('lch:send-text', (_event, peerId, text, options) => sendChatText(peerId, text, options || {}));
   ipcMain.handle('lch:create-conversation', (_event, data) => {
     createLocalConversation(data || {});
+    return appStateView();
+  });
+  ipcMain.handle('lch:update-conversation', (_event, data) => {
+    updateLocalConversation(data || {});
     return appStateView();
   });
   ipcMain.handle('lch:send-conversation-text', (_event, conversationId, text, options) => sendConversationText(conversationId, text, options || {}));

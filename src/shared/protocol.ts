@@ -1,6 +1,9 @@
 export const APP_NAME = 'Lan Control Hub';
-export const APP_VERSION = '0.5.0';
+export const APP_VERSION = '0.5.1';
 export const STATE_SCHEMA_VERSION = 2;
+export const DISCOVERY_PROTOCOL_VERSION = 1;
+export const CONTROL_PROTOCOL_VERSION = 1;
+export const MIN_SUPPORTED_PROTOCOL_VERSION = 1;
 
 export const DISCOVERY_PORT = 46880;
 export const DEFAULT_CONTROL_PORT = 46881;
@@ -41,6 +44,9 @@ export const CAPABILITIES = [
 ] as const;
 
 export type Capability = typeof CAPABILITIES[number];
+export const CAPABILITY_VERSIONS: Record<Capability, number> = Object.fromEntries(
+  CAPABILITIES.map((capability) => [capability, 1])
+) as Record<Capability, number>;
 export type Platform = NodeJS.Platform | 'unknown';
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type TaskStream = 'stdout' | 'stderr' | 'system';
@@ -94,6 +100,8 @@ export interface HomeInfo {
 export interface DiscoveryPacket {
   kind: 'lch-discovery';
   version: 1;
+  protocolVersion?: number;
+  minSupportedProtocolVersion?: number;
   homeId: string;
   appVersion: string;
   device: DeviceIdentity;
@@ -101,6 +109,7 @@ export interface DiscoveryPacket {
   controlPort: number;
   webPort: number;
   capabilities: Capability[];
+  capabilityVersions?: Partial<Record<Capability, number>>;
   timestamp: number;
 }
 
@@ -109,6 +118,9 @@ export interface PeerInfo extends DeviceIdentity {
   controlPort: number;
   webPort: number;
   capabilities: Capability[];
+  protocolVersion?: number;
+  minSupportedProtocolVersion?: number;
+  capabilityVersions?: Partial<Record<Capability, number>>;
   appVersion: string;
   lastSeen: number;
   trusted: boolean;
@@ -294,6 +306,33 @@ export interface ControlResponse<T = unknown> {
   ok: boolean;
   data?: T;
   error?: string;
+  code?: 'unsupported' | 'error';
+}
+
+export function unsupportedControlResponse(type: string): ControlResponse<{
+  type: string;
+  appVersion: string;
+  protocolVersion: number;
+  minSupportedProtocolVersion: number;
+  capabilities: Capability[];
+}> {
+  return {
+    ok: false,
+    code: 'unsupported',
+    error: `Unsupported control message: ${type || 'unknown'}`,
+    data: {
+      type: type || 'unknown',
+      appVersion: APP_VERSION,
+      protocolVersion: CONTROL_PROTOCOL_VERSION,
+      minSupportedProtocolVersion: MIN_SUPPORTED_PROTOCOL_VERSION,
+      capabilities: [...CAPABILITIES]
+    }
+  };
+}
+
+export function isProtocolCompatible(protocolVersion = DISCOVERY_PROTOCOL_VERSION, minSupportedProtocolVersion = MIN_SUPPORTED_PROTOCOL_VERSION) {
+  return protocolVersion >= MIN_SUPPORTED_PROTOCOL_VERSION
+    && CONTROL_PROTOCOL_VERSION >= minSupportedProtocolVersion;
 }
 
 export interface SharedFolderListing {

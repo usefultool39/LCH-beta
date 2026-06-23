@@ -12,9 +12,10 @@ import { WebSocket, WebSocketServer } from 'ws';
 import {
   APP_NAME,
   APP_VERSION,
-  BlockedDevice,
   CAPABILITIES,
+  CAPABILITY_VERSIONS,
   COMMAND_TIMEOUT_MS,
+  CONTROL_PROTOCOL_VERSION,
   DEFAULT_CONTROL_PORT,
   DEFAULT_LOCAL_API_PORT,
   DEFAULT_WEB_PORT,
@@ -32,6 +33,7 @@ import {
   MAX_LOCAL_API_BODY_BYTES,
   MAX_TASK_OUTPUT_BYTES,
   MAX_TRANSFER_RECORDS,
+  MIN_SUPPORTED_PROTOCOL_VERSION,
   NetworkInfo,
   PEER_TIMEOUT_MS,
   STATE_SCHEMA_VERSION,
@@ -46,56 +48,18 @@ import {
   SharedFolderListing,
   TaskRecord,
   TransferRecord,
-  TrustedDevice,
-  isDiscoveryPacket
+  isDiscoveryPacket,
+  unsupportedControlResponse
 } from '../shared/protocol';
 import { decodeFilePayload } from '../shared/file-transfer';
 import { cleanSharedPath, resolveInsideRoot } from '../shared/shared-paths';
 import { ControlReplayGuard } from '../shared/security';
 import { blockedDeviceFromTrust, isDeviceBlocked, isDeviceTrusted, trustedDeviceFromPeer } from '../shared/trust';
+import { migrateState, type PersistedAppState } from '../shared/state-migration';
 
 type RuntimePeer = PeerInfo;
 
-type AppState = {
-  stateVersion: number;
-  home: null | {
-    id: string;
-    name: string;
-    secret: string;
-    createdAt: number;
-  };
-  device: {
-    id: string;
-    name: string;
-    platform: NodeJS.Platform;
-    publicKey: string;
-    privateKey: string;
-    publicKeyHash: string;
-  };
-  trustedDevices: Record<string, TrustedDevice>;
-  blockedDevices: Record<string, BlockedDevice>;
-  devicePreferences: Record<string, DevicePreference>;
-  conversations: Record<string, any[]>;
-  tasks: TaskRecord[];
-  auditLog: any[];
-  sharedFolder: string;
-  fileShareEnabled: boolean;
-  autoTrustDevices: boolean;
-  localApiToken: string;
-  manualPeerAddresses: Array<{
-    address: string;
-    host: string;
-    port: number;
-    label: string;
-    status: 'unknown' | 'online' | 'offline' | 'home-mismatch' | 'invalid' | 'self';
-    lastCheckedAt?: number;
-    lastSeenAt?: number;
-    lastError?: string;
-    peerId?: string;
-    peerName?: string;
-  }>;
-  transfers: TransferRecord[];
-};
+type AppState = PersistedAppState;
 
 type TerminalSession = {
   terminalId: string;
@@ -448,76 +412,13 @@ function normalizeManualPeerAddresses(values: any[] = []) {
   return output.slice(-100);
 }
 
-function normalizeTransferRecords(records: any[] = []) {
-  return records
-    .filter((record) => record?.id && record?.peerId && record?.name)
-    .map((record) => ({
-      id: String(record.id),
-      direction: record.direction === 'upload' ? 'upload' as const : 'download' as const,
-      peerId: String(record.peerId),
-      peerName: String(record.peerName || record.peerId),
-      name: String(record.name),
-      relativePath: record.relativePath ? String(record.relativePath) : undefined,
-      targetPath: record.targetPath ? String(record.targetPath) : undefined,
-      localPath: record.localPath ? String(record.localPath) : undefined,
-      size: Number(record.size || 0),
-      transferredBytes: Number(record.transferredBytes || 0),
-      status: ['queued', 'running', 'completed', 'failed', 'cancelled'].includes(record.status) ? record.status : 'failed',
-      startedAt: Number(record.startedAt || Date.now()),
-      updatedAt: Number(record.updatedAt || Date.now()),
-      endedAt: record.endedAt ? Number(record.endedAt) : undefined,
-      speedBytesPerSecond: record.speedBytesPerSecond ? Number(record.speedBytesPerSecond) : undefined,
-      sha256: record.sha256 ? String(record.sha256) : undefined,
-      error: record.error ? String(record.error) : undefined
-    }))
-    .slice(0, MAX_TRANSFER_RECORDS);
-}
-
-function normalizeTaskRecords(tasks: TaskRecord[] = []) {
-  return tasks.map((task) => {
-    const hasTerminalSignal = task.endedAt
-      || task.exitCode !== undefined
-      || task.signal !== undefined;
-    if ((task.status === 'running' || task.status === 'pending') && hasTerminalSignal) {
-      return {
-        ...task,
-        status: task.exitCode === 0 ? 'completed' as const : 'failed' as const
-      };
-    }
-    return task;
-  });
-}
-
 function loadState(): AppState {
   try {
-    const parsed = JSON.parse(fs.readFileSync(statePath(), 'utf8')) as Partial<AppState>;
-    if (parsed.device?.id && parsed.device?.privateKey) {
-      const publicKey = parsed.device.publicKey || '';
-      return {
-        home: parsed.home || null,
-        stateVersion: STATE_SCHEMA_VERSION,
-        device: {
-          id: parsed.device.id,
-          name: parsed.device.name || os.hostname(),
-          platform: parsed.device.platform || process.platform,
-          publicKey,
-          privateKey: parsed.device.privateKey,
-          publicKeyHash: parsed.device.publicKeyHash || publicKeyHash(publicKey)
-        },
-        trustedDevices: parsed.trustedDevices || {},
-        blockedDevices: (parsed as any).blockedDevices || {},
-        devicePreferences: (parsed as any).devicePreferences || {},
-        conversations: parsed.conversations || {},
-        tasks: normalizeTaskRecords(parsed.tasks || []),
-        auditLog: parsed.auditLog || [],
-        sharedFolder: parsed.sharedFolder || '',
-        fileShareEnabled: (parsed as any).fileShareEnabled !== false,
-        autoTrustDevices: Boolean((parsed as any).autoTrustDevices),
-        localApiToken: parsed.localApiToken || base64url(crypto.randomBytes(32)),
-        manualPeerAddresses: normalizeManualPeerAddresses(Array.isArray((parsed as any).manualPeerAddresses) ? (parsed as any).manualPeerAddresses : []),
-        transfers: normalizeTransferRecords((parsed as any).transfers || [])
-      };
-    }
+    const parsed = JSON.parse(fs.readFileSync(statePath(), 'utf8'));
+    return migrateState(parsed, createDefaultState(), {
+      publicKeyHash,
+      normalizeManualPeerAddresses
+    });
   } catch {
     // First launch or corrupted state.
   }
@@ -1152,6 +1053,8 @@ function localAnnouncement(): DiscoveryPacket | null {
   return {
     kind: 'lch-discovery',
     version: 1,
+    protocolVersion: CONTROL_PROTOCOL_VERSION,
+    minSupportedProtocolVersion: MIN_SUPPORTED_PROTOCOL_VERSION,
     homeId: state.home.id,
     appVersion: APP_VERSION,
     device: {
@@ -1164,6 +1067,7 @@ function localAnnouncement(): DiscoveryPacket | null {
     controlPort,
     webPort,
     capabilities: [...CAPABILITIES],
+    capabilityVersions: { ...CAPABILITY_VERSIONS },
     timestamp: Date.now()
   };
 }
@@ -1188,6 +1092,9 @@ function rememberPeer(packet: DiscoveryPacket, address: string) {
     controlPort: packet.controlPort,
     webPort: packet.webPort,
     capabilities: packet.capabilities,
+    protocolVersion: packet.protocolVersion,
+    minSupportedProtocolVersion: packet.minSupportedProtocolVersion,
+    capabilityVersions: packet.capabilityVersions,
     appVersion: packet.appVersion,
     lastSeen: Date.now(),
     trusted: !identityMismatch && !blocked && Boolean(state.trustedDevices[packet.device.id]),
@@ -1502,7 +1409,7 @@ async function handleControlMessage(payload: { fromId: string; fromName: string;
       return { ok: true, data: await captureLocalScreenshot() };
 
     default:
-      return { ok: false, error: `未知控制消息：${payload.type}` };
+      return unsupportedControlResponse(payload.type);
   }
 }
 

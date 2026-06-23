@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.1
+
+- Add explicit control protocol and capability-version metadata to discovery packets for safer mixed-version upgrades.
+- Add a shared, tested state migration path for persisted state instead of open-coded loading fallbacks.
+- Return structured `unsupported` responses for unknown control messages so older devices can degrade without crashing.
+- Refresh release documentation and security notes to match the current 20 GB streaming file-transfer path.
+
 ## v0.5.0
 
 - Add state schema versioning and migration for manual peer and transfer history data.

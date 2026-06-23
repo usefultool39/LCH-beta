@@ -707,11 +707,8 @@ function ChatView({ state, conversation, messages, onSelectConversation, onCreat
   const conversations = useMemo(() => buildConversationList(state), [state]);
   const directConversations = conversations.filter((item) => item.kind === 'direct');
   const groupConversations = conversations.filter((item) => item.kind === 'group');
-  const directPeer = conversation?.kind === 'direct'
-    ? state.peers.find((peer) => peer.id === directPeerId(conversation, state) || peer.id === conversation.id) || null
-    : null;
   const canSend = canSendToConversation(conversation, state);
-  const canSendFile = Boolean(directPeer && canSend);
+  const canSendFile = Boolean(conversation && canSend);
   const filteredMessages = messages.filter((message) => !query.trim() || messageSearchText(message).includes(query.trim().toLowerCase()));
 
   useEffect(() => {
@@ -846,7 +843,7 @@ function ChatView({ state, conversation, messages, onSelectConversation, onCreat
               event.target.value = '';
             }}
           />
-          <button className="secondary" disabled={!canSendFile} title={canSendFile ? '发送文件' : '群组文件发送后续版本支持'} onClick={() => fileRef.current?.click()}><Upload size={16} /> 文件</button>
+          <button className="secondary" disabled={!canSendFile} title={canSendFile ? '发送文件' : '当前会话没有可发送成员'} onClick={() => fileRef.current?.click()}><Upload size={16} /> 文件</button>
           <div className="composerText">
             {replyTo ? (
               <div className="replyDraft">
@@ -2462,10 +2459,9 @@ function App() {
             run(() => api.createConversation({ id: conversationId, title, memberIds, kind: 'group' }));
           }}
           onSendText={(text, options) => selectedConversation && run(() => api.sendConversationText(selectedConversation.id, text, options))}
-          onSendFile={(file) => selectedConversation?.kind === 'direct' && run(async () => {
-            const peerId = directPeerId(selectedConversation, state) || selectedConversation.id;
+          onSendFile={(file) => selectedConversation && run(async () => {
             const base64 = await readFileAsBase64(file);
-            return api.sendFile(peerId, { name: file.name, size: file.size, base64 });
+            return api.sendConversationFile(selectedConversation.id, { name: file.name, size: file.size, base64 });
           })}
           onReact={(messageId, emoji) => selectedConversation && run(async () => {
             const result = await api.reactToConversationMessage(selectedConversation.id, messageId, emoji);

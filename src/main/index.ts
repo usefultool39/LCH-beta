@@ -60,7 +60,7 @@ import {
 } from '../shared/protocol';
 import { decodeFilePayload } from '../shared/file-transfer';
 import { cleanSharedPath, resolveInsideRoot } from '../shared/shared-paths';
-import { conversationRecipientIds, directConversationPeerId } from '../shared/conversations';
+import { conversationMessageMetadata, conversationRecipientIds, directConversationPeerId } from '../shared/conversations';
 import { ControlReplayGuard } from '../shared/security';
 import { blockedDeviceFromTrust, isDeviceBlocked, isDeviceTrusted, trustedDeviceFromPeer } from '../shared/trust';
 import { migrateState, normalizeWebRtcConfig, type PersistedAppState } from '../shared/state-migration';
@@ -1055,10 +1055,7 @@ async function sendConversationText(conversationId: string, text: string, option
 
   const message = createChatMessage(text, {
     ...options,
-    conversationId: record.id,
-    conversationKind: 'group',
-    conversationTitle: record.title,
-    memberIds
+    ...conversationMessageMetadata({ ...record, memberIds }, state.device.id)
   });
   const delivered: string[] = [];
   const failed: Array<{ peerId: string; error: string }> = [];
@@ -1087,6 +1084,90 @@ async function sendConversationText(conversationId: string, text: string, option
     senderName: state.device.name
   });
   if (failed.length) addAudit('chat.group.partial', `群组消息部分送达：${failed.map((item) => item.peerId).join(', ')}`);
+  return appStateView();
+}
+
+async function sendPeerFile(peerId: string, file: any, options: any = {}) {
+  assertPeerWritable(peerId);
+  const decoded = decodeFilePayload(file, MAX_FILE_BYTES);
+  const eventId = String(options.id || crypto.randomUUID());
+  const payload = {
+    id: eventId,
+    name: decoded.name,
+    size: decoded.size,
+    base64: String(file.base64),
+    conversationId: options.conversationId ? String(options.conversationId) : undefined,
+    conversationKind: options.conversationKind === 'group' ? 'group' as const : options.conversationKind === 'direct' ? 'direct' as const : undefined,
+    conversationTitle: options.conversationTitle ? String(options.conversationTitle).trim().slice(0, 120) : undefined,
+    memberIds: Array.isArray(options.memberIds) ? uniqueDeviceIds(options.memberIds) : undefined
+  };
+  await sendControl(peerId, 'file.send', payload, 60000);
+  addConversationEvent(peerId, {
+    id: eventId,
+    conversationId: payload.conversationId,
+    direction: 'outgoing',
+    type: 'file',
+    name: decoded.name,
+    size: decoded.size,
+    senderName: state.device.name
+  });
+  return appStateView();
+}
+
+async function sendConversationFile(conversationId: string, file: any) {
+  const id = String(conversationId || '').trim();
+  if (!id) throw new Error('会话 ID 不能为空');
+  const existing = state.conversationRecords[id];
+  const record = existing || ensureConversationRecord(id, {
+    kind: 'direct',
+    memberIds: [state.device.id, id]
+  });
+  if (record.kind === 'direct') {
+    const peerId = directConversationPeerId(record, state.device.id);
+    if (!peerId) throw new Error('直接会话缺少远端设备');
+    return sendPeerFile(peerId, file, { conversationId: record.id });
+  }
+
+  const decoded = decodeFilePayload(file, MAX_FILE_BYTES);
+  const memberIds = uniqueDeviceIds([state.device.id, ...(record.memberIds || [])]);
+  const metadata = conversationMessageMetadata({ ...record, memberIds }, state.device.id);
+  const recipientIds = conversationRecipientIds({ memberIds }, state.device.id);
+  if (!recipientIds.length) throw new Error('群组会话缺少可发送成员');
+
+  const eventId = crypto.randomUUID();
+  const payload = {
+    id: eventId,
+    name: decoded.name,
+    size: decoded.size,
+    base64: String(file.base64),
+    ...metadata
+  };
+  const delivered: string[] = [];
+  const failed: Array<{ peerId: string; error: string }> = [];
+  for (const peerId of recipientIds) {
+    try {
+      assertPeerWritable(peerId);
+      await sendControl(peerId, 'file.send', payload, 60000);
+      delivered.push(peerId);
+    } catch (error: any) {
+      failed.push({ peerId, error: error?.message || String(error) });
+      logRuntimeError('file-conversation-send', error);
+    }
+  }
+  if (!delivered.length) {
+    throw new Error(`群组文件未送达：${failed.map((item) => `${peerDisplayName(item.peerId)} ${item.error}`).join('；')}`);
+  }
+
+  addConversationEvent(state.device.id, {
+    id: eventId,
+    conversationId: record.id,
+    direction: 'outgoing',
+    type: 'file',
+    name: decoded.name,
+    size: decoded.size,
+    senderName: state.device.name
+  });
+  if (failed.length) addAudit('file.group.partial', `群组文件部分送达：${failed.map((item) => item.peerId).join(', ')}`);
   return appStateView();
 }
 
@@ -2457,9 +2538,21 @@ function contentDisposition(fileName: string, disposition: 'inline' | 'attachmen
 
 function receiveFile(peerId: string, peerName: string, file: any) {
   const { name, buffer } = decodeFilePayload(file, MAX_FILE_BYTES);
+  const conversationId = file?.conversationId ? String(file.conversationId) : peerId;
+  if (file?.conversationId) {
+    ensureConversationRecord(conversationId, {
+      kind: file.conversationKind === 'group' ? 'group' : 'direct',
+      title: file.conversationTitle ? String(file.conversationTitle).trim().slice(0, 120) : undefined,
+      memberIds: uniqueDeviceIds([state.device.id, peerId, ...(Array.isArray(file.memberIds) ? file.memberIds : [])]),
+      createdByDeviceId: peerId,
+      updatedAt: Date.now()
+    });
+  }
   const filePath = uniqueDownloadPath(name);
   fs.writeFileSync(filePath, buffer);
   addConversationEvent(peerId, {
+    id: file?.id ? String(file.id) : undefined,
+    conversationId,
     direction: 'incoming',
     type: 'file',
     name,
@@ -3147,6 +3240,7 @@ async function handleLocalApi(pathname: string, method: string, body: any) {
   if (method === 'GET' && pathname === '/api/conversations') return Object.values(state.conversationRecords);
   if (method === 'POST' && pathname === '/api/conversations/create') return createLocalConversation(body);
   if (method === 'POST' && pathname === '/api/conversations/send') return sendConversationText(body.conversationId || body.id, body.text, body);
+  if (method === 'POST' && pathname === '/api/conversations/send-file') return sendConversationFile(body.conversationId || body.id, body);
   if (method === 'POST' && pathname === '/api/transfers/cancel') return cancelTransfer(body.transferId || body.id);
   if (method === 'POST' && pathname === '/api/run') {
     const peerIds = body.all ? [] : (Array.isArray(body.peerIds) ? body.peerIds : []);
@@ -3216,20 +3310,7 @@ async function handleLocalApi(pathname: string, method: string, body: any) {
     return createRemoteSharedFileToken(body.peerId, body.relativePath || '');
   }
   if (method === 'POST' && pathname === '/api/files/send') {
-    assertPeerWritable(body.peerId);
-    const file = decodeFilePayload(body, MAX_FILE_BYTES);
-    await sendControl(body.peerId, 'file.send', {
-      name: file.name,
-      size: file.size,
-      base64: String(body.base64)
-    }, 60000);
-    addConversationEvent(body.peerId, {
-      direction: 'outgoing',
-      type: 'file',
-      name: file.name,
-      size: file.size,
-      senderName: state.device.name
-    });
+    await sendPeerFile(body.peerId, body, body);
     return true;
   }
   if (method === 'POST' && pathname === '/api/files/put') {
@@ -3502,25 +3583,10 @@ function registerIpc() {
     return appStateView();
   });
   ipcMain.handle('lch:send-conversation-text', (_event, conversationId, text, options) => sendConversationText(conversationId, text, options || {}));
+  ipcMain.handle('lch:send-conversation-file', (_event, conversationId, file) => sendConversationFile(conversationId, file || {}));
   ipcMain.handle('lch:react-message', (_event, peerId, messageId, emoji, options) => reactToChatMessage(peerId, messageId, emoji, options || {}));
   ipcMain.handle('lch:react-conversation-message', (_event, conversationId, messageId, emoji) => reactToConversationMessage(conversationId, messageId, emoji));
-  ipcMain.handle('lch:send-file', async (_event, peerId, file) => {
-    assertPeerWritable(peerId);
-    const decoded = decodeFilePayload(file, MAX_FILE_BYTES);
-    await sendControl(peerId, 'file.send', {
-      name: decoded.name,
-      size: decoded.size,
-      base64: String(file.base64)
-    }, 60000);
-    addConversationEvent(peerId, {
-      direction: 'outgoing',
-      type: 'file',
-      name: decoded.name,
-      size: decoded.size,
-      senderName: state.device.name
-    });
-    return appStateView();
-  });
+  ipcMain.handle('lch:send-file', (_event, peerId, file) => sendPeerFile(peerId, file || {}));
   ipcMain.handle('lch:list-shared-files', (_event, peerId, relativePath) => (
     sendControl(peerId, 'file.listShared', { relativePath })
   ));

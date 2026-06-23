@@ -14,3 +14,13 @@ export function directConversationPeerId(record: Pick<ConversationRecord, 'id' |
   if (recipient) return recipient;
   return record.kind === 'direct' && record.id !== localDeviceId ? record.id : '';
 }
+
+export function conversationMessageMetadata(record: Pick<ConversationRecord, 'id' | 'kind' | 'title' | 'memberIds'>, localDeviceId: string) {
+  const memberIds = uniqueConversationMemberIds([localDeviceId, ...(record.memberIds || [])]);
+  return {
+    conversationId: record.id,
+    conversationKind: record.kind,
+    conversationTitle: record.title,
+    memberIds
+  };
+}

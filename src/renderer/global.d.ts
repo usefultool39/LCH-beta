@@ -30,6 +30,7 @@ declare global {
       sendText: (peerId: string, text: string, options?: { conversationId?: string; replyTo?: AppStateView['conversations'][string][number]['replyTo'] }) => Promise<AppStateView>;
       createConversation: (data: { id?: string; title?: string; memberIds: string[]; kind?: 'direct' | 'group' }) => Promise<AppStateView>;
       sendConversationText: (conversationId: string, text: string, options?: { replyTo?: AppStateView['conversations'][string][number]['replyTo'] }) => Promise<AppStateView>;
+      sendConversationFile: (conversationId: string, file: { name: string; size: number; base64: string }) => Promise<AppStateView>;
       reactToMessage: (peerId: string, messageId: string, emoji: string, options?: { conversationId?: string }) => Promise<{ applied: boolean; state: AppStateView }>;
       reactToConversationMessage: (conversationId: string, messageId: string, emoji: string) => Promise<{ applied: boolean; state: AppStateView }>;
       sendFile: (peerId: string, file: { name: string; size: number; base64: string }) => Promise<AppStateView>;

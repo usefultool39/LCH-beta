@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  conversationMessageMetadata,
   conversationRecipientIds,
   directConversationPeerId,
   uniqueConversationMemberIds
@@ -23,4 +24,18 @@ test('directConversationPeerId resolves legacy direct conversation ids', () => {
     kind: 'direct',
     memberIds: ['local']
   }, 'local'), 'peer-1');
+});
+
+test('conversationMessageMetadata includes normalized member ids for group payloads', () => {
+  assert.deepEqual(conversationMessageMetadata({
+    id: 'conv:team',
+    kind: 'group',
+    title: 'Team',
+    memberIds: ['local', 'peer-1', 'peer-2', 'peer-1']
+  }, 'local'), {
+    conversationId: 'conv:team',
+    conversationKind: 'group',
+    conversationTitle: 'Team',
+    memberIds: ['local', 'peer-1', 'peer-2']
+  });
 });

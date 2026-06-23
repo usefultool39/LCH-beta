@@ -28,6 +28,7 @@ const api = {
   sendText: (peerId: string, text: string, options?: unknown) => ipcRenderer.invoke('lch:send-text', peerId, text, options),
   createConversation: (data: unknown) => ipcRenderer.invoke('lch:create-conversation', data),
   sendConversationText: (conversationId: string, text: string, options?: unknown) => ipcRenderer.invoke('lch:send-conversation-text', conversationId, text, options),
+  sendConversationFile: (conversationId: string, file: { name: string; size: number; base64: string }) => ipcRenderer.invoke('lch:send-conversation-file', conversationId, file),
   reactToMessage: (peerId: string, messageId: string, emoji: string, options?: unknown) => ipcRenderer.invoke('lch:react-message', peerId, messageId, emoji, options),
   reactToConversationMessage: (conversationId: string, messageId: string, emoji: string) => ipcRenderer.invoke('lch:react-conversation-message', conversationId, messageId, emoji),
   sendFile: (peerId: string, file: { name: string; size: number; base64: string }) => ipcRenderer.invoke('lch:send-file', peerId, file),

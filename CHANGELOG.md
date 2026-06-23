@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.11.0
+
+- Add group file sending from the chat composer by delivering the existing encrypted `file.send` payload to each group member.
+- Keep direct file sending on the same path while preserving the existing one-to-one conversation IDs.
+- Store incoming and outgoing group file events under the shared `conversationId` so new devices see the file record in the group conversation.
+- Add tested conversation payload metadata helpers and document the current boundary: group file sending is for the existing small-file chat path, not shared-folder streaming.
+
 ## v0.10.0
 
 - Add the first chat conversation list UI with direct conversations and locally created group conversations.

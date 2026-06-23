@@ -28,6 +28,7 @@ import {
   Plus,
   Power,
   RefreshCw,
+  Reply,
   ScreenShare,
   Search,
   Send,
@@ -44,7 +45,7 @@ import {
   Music2,
   FileText
 } from 'lucide-react';
-import { APP_VERSION, DEFAULT_WEBRTC_CONFIG, MAX_FILE_BYTES } from '../shared/protocol';
+import { APP_VERSION, CHAT_REACTION_EMOJIS, DEFAULT_WEBRTC_CONFIG, MAX_FILE_BYTES } from '../shared/protocol';
 import type { AppStateView, DevicePreference, FirewallStatus, PeerInfo, RemoteInputEvent, RemoteOpenResult, RemoteSessionRecord, SharedFileToken, SharedFolderListing, TaskRecord, TerminalOutputEvent, TransferRecord, WebRtcConfig, WebRtcIceTransportPolicy } from '../shared/protocol';
 import '@xterm/xterm/css/xterm.css';
 import './styles.css';
@@ -569,14 +570,69 @@ function Dashboard({
   );
 }
 
-function ChatView({ peer, messages, onSendText, onSendFile }: {
+function messageSearchText(message: any) {
+  return [
+    message.text,
+    message.name,
+    message.path,
+    message.senderName,
+    message.replyTo?.text,
+    message.replyTo?.name
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function replyRefFromMessage(message: any) {
+  return {
+    id: String(message.id),
+    type: message.type === 'file' ? 'file' as const : 'text' as const,
+    senderName: message.senderName,
+    text: message.type === 'text' ? String(message.text || '').slice(0, 240) : undefined,
+    name: message.type === 'file' ? String(message.name || '').slice(0, 180) : undefined,
+    createdAt: message.createdAt
+  };
+}
+
+function renderInlineMarkdown(text: string) {
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).filter(Boolean);
+  return parts.map((part, index) => {
+    if (part.startsWith('`') && part.endsWith('`')) return <code key={index}>{part.slice(1, -1)}</code>;
+    if (part.startsWith('**') && part.endsWith('**')) return <strong key={index}>{part.slice(2, -2)}</strong>;
+    return <React.Fragment key={index}>{part}</React.Fragment>;
+  });
+}
+
+function renderMessageMarkdown(text = '') {
+  const blocks: React.ReactNode[] = [];
+  const pattern = /```([A-Za-z0-9_-]*)\n?([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text))) {
+    if (match.index > lastIndex) {
+      blocks.push(<p key={`p-${lastIndex}`}>{renderInlineMarkdown(text.slice(lastIndex, match.index))}</p>);
+    }
+    blocks.push(
+      <pre key={`code-${match.index}`}><code>{match[2].trimEnd()}</code></pre>
+    );
+    lastIndex = pattern.lastIndex;
+  }
+  if (lastIndex < text.length || !blocks.length) {
+    blocks.push(<p key={`p-${lastIndex}`}>{renderInlineMarkdown(text.slice(lastIndex))}</p>);
+  }
+  return <div className="messageMarkdown">{blocks}</div>;
+}
+
+function ChatView({ peer, messages, onSendText, onSendFile, onReact }: {
   peer: PeerInfo | null;
   messages: any[];
-  onSendText: (text: string) => void;
+  onSendText: (text: string, options?: { replyTo?: ReturnType<typeof replyRefFromMessage> }) => void;
   onSendFile: (file: File) => void;
+  onReact: (messageId: string, emoji: string) => void;
 }) {
   const [text, setText] = useState('');
+  const [query, setQuery] = useState('');
+  const [replyTo, setReplyTo] = useState<any | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const filteredMessages = messages.filter((message) => !query.trim() || messageSearchText(message).includes(query.trim().toLowerCase()));
   if (!peer) {
     return <section className="workspace centerHint">选择一台设备开始聊天。</section>;
   }
@@ -585,24 +641,50 @@ function ChatView({ peer, messages, onSendText, onSendFile }: {
       <header className="workspaceHeader">
         <div>
           <h1>{peer.name}</h1>
-          <p>聊天和文件传输保留原有工作流</p>
+          <p>支持搜索、回复、代码块和 reaction，旧设备会自动降级为普通文本消息</p>
         </div>
       </header>
+      <div className="chatToolbar">
+        <Search size={16} />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索消息、文件或引用" />
+      </div>
       <div className="messages">
-        {messages.length ? messages.map((message) => (
+        {filteredMessages.length ? filteredMessages.map((message) => (
           <div className={`message ${message.direction}`} key={message.id}>
             <div className="bubble">
-              {message.type === 'text' ? <p>{message.text}</p> : (
+              {message.replyTo ? (
+                <button className="replyQuote" onClick={() => setQuery(message.replyTo?.text || message.replyTo?.name || '')}>
+                  <strong>{message.replyTo.senderName || '引用消息'}</strong>
+                  <span>{message.replyTo.type === 'file' ? message.replyTo.name : message.replyTo.text}</span>
+                </button>
+              ) : null}
+              {message.type === 'text' ? renderMessageMarkdown(message.text || '') : (
                 <div className="fileBubble">
                   <strong>{message.name}</strong>
                   <small>{formatBytes(message.size)}</small>
                   {message.path ? <small>{message.path}</small> : null}
                 </div>
               )}
+              {message.reactions ? (
+                <div className="reactionSummary">
+                  {Object.entries(message.reactions).map(([emoji, actors]) => (
+                    <button key={emoji} onClick={() => onReact(message.id, emoji)}>
+                      <span>{emoji}</span>
+                      <small>{Array.isArray(actors) ? actors.length : 0}</small>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="messageActions">
+                <button title="回复" onClick={() => setReplyTo(message)}><Reply size={13} /></button>
+                {CHAT_REACTION_EMOJIS.map((emoji) => (
+                  <button title={`发送 ${emoji}`} key={emoji} onClick={() => onReact(message.id, emoji)}>{emoji}</button>
+                ))}
+              </div>
               <time>{formatTime(message.createdAt)}</time>
             </div>
           </div>
-        )) : <div className="empty">还没有消息。</div>}
+        )) : <div className="empty">{query.trim() ? '没有匹配的消息。' : '还没有消息。'}</div>}
       </div>
       <footer className="composer">
         <input
@@ -616,10 +698,19 @@ function ChatView({ peer, messages, onSendText, onSendFile }: {
           }}
         />
         <button className="secondary" onClick={() => fileRef.current?.click()}><Upload size={16} /> 文件</button>
-        <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="输入消息" />
+        <div className="composerText">
+          {replyTo ? (
+            <div className="replyDraft">
+              <span>回复 {replyTo.senderName || (replyTo.direction === 'outgoing' ? '我' : peer.name)}：{replyTo.type === 'file' ? replyTo.name : replyTo.text}</span>
+              <button onClick={() => setReplyTo(null)}>取消</button>
+            </div>
+          ) : null}
+          <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="输入消息，支持 **加粗**、`代码` 和 ```代码块```" />
+        </div>
         <button className="primary" disabled={!text.trim()} onClick={() => {
-          onSendText(text);
+          onSendText(text, replyTo ? { replyTo: replyRefFromMessage(replyTo) } : undefined);
           setText('');
+          setReplyTo(null);
         }}><Send size={16} /> 发送</button>
       </footer>
     </section>
@@ -2197,10 +2288,14 @@ function App() {
         <ChatView
           peer={selectedPeer}
           messages={messages || []}
-          onSendText={(text) => selectedPeer && run(() => api.sendText(selectedPeer.id, text))}
+          onSendText={(text, options) => selectedPeer && run(() => api.sendText(selectedPeer.id, text, options))}
           onSendFile={(file) => selectedPeer && run(async () => {
             const base64 = await readFileAsBase64(file);
             return api.sendFile(selectedPeer.id, { name: file.name, size: file.size, base64 });
+          })}
+          onReact={(messageId, emoji) => selectedPeer && run(async () => {
+            const result = await api.reactToMessage(selectedPeer.id, messageId, emoji);
+            return result.state;
           })}
         />
       ) : null}

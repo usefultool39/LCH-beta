@@ -13,6 +13,9 @@ const {
 test('capability versions are declared for every advertised capability', () => {
   assert.equal(CAPABILITIES.includes('terminal.pty'), true);
   assert.equal(CAPABILITIES.includes('screen.webrtc.ice'), true);
+  assert.equal(CAPABILITIES.includes('chat.markdown'), true);
+  assert.equal(CAPABILITIES.includes('chat.reply'), true);
+  assert.equal(CAPABILITIES.includes('chat.reactions'), true);
   for (const capability of CAPABILITIES) {
     assert.equal(CAPABILITY_VERSIONS[capability], 1);
   }

@@ -48,6 +48,8 @@ test('migrateState upgrades legacy persisted state without losing usable data', 
         type: 'text',
         text: 'hello',
         createdAt: 200,
+        markdown: true,
+        replyTo: { id: 'source-1', type: 'text', senderName: 'Peer', text: 'source message', createdAt: 180 },
         reactions: { ok: ['peer-1'] }
       }]
     },
@@ -76,6 +78,8 @@ test('migrateState upgrades legacy persisted state without losing usable data', 
   assert.equal(migrated.device.publicKeyHash, 'computed-hash');
   assert.equal(migrated.fileShareEnabled, false);
   assert.equal(migrated.conversations['peer-1'][0].peerId, 'peer-1');
+  assert.equal(migrated.conversations['peer-1'][0].markdown, true);
+  assert.equal(migrated.conversations['peer-1'][0].replyTo.id, 'source-1');
   assert.deepEqual(migrated.conversations['peer-1'][0].reactions, { ok: ['peer-1'] });
   assert.equal(migrated.tasks[0].status, 'completed');
   assert.equal(migrated.manualPeerAddresses[0].label, '100.64.1.2:46882');

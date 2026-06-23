@@ -1,6 +1,6 @@
 export const APP_NAME = 'Lan Control Hub';
-export const APP_VERSION = '0.7.0';
-export const STATE_SCHEMA_VERSION = 3;
+export const APP_VERSION = '0.8.0';
+export const STATE_SCHEMA_VERSION = 4;
 export const DISCOVERY_PROTOCOL_VERSION = 1;
 export const CONTROL_PROTOCOL_VERSION = 1;
 export const MIN_SUPPORTED_PROTOCOL_VERSION = 1;
@@ -24,6 +24,9 @@ export const MAX_TRANSFER_RECORDS = 300;
 
 export const CAPABILITIES = [
   'chat',
+  'chat.markdown',
+  'chat.reply',
+  'chat.reactions',
   'files',
   'commands',
   'terminal',
@@ -49,6 +52,7 @@ export type Capability = typeof CAPABILITIES[number];
 export const CAPABILITY_VERSIONS: Record<Capability, number> = Object.fromEntries(
   CAPABILITIES.map((capability) => [capability, 1])
 ) as Record<Capability, number>;
+export const CHAT_REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '✅', '👀'] as const;
 export type Platform = NodeJS.Platform | 'unknown';
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type TaskStream = 'stdout' | 'stderr' | 'system';
@@ -185,6 +189,18 @@ export interface ConversationEvent {
   size?: number;
   path?: string;
   senderName?: string;
+  markdown?: boolean;
+  replyTo?: {
+    id: string;
+    type: 'text' | 'file';
+    senderName?: string;
+    text?: string;
+    name?: string;
+    createdAt?: number;
+  };
+  reactions?: Record<string, string[]>;
+  editedAt?: number;
+  deletedAt?: number;
 }
 
 export interface TaskRecord {

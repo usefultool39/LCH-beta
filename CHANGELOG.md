@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.0
+
+- Add shared message IDs for new chat messages so reply references and reactions can stay aligned across devices.
+- Add optional reply metadata, Markdown/code-block rendering, local message search, and basic emoji reactions in the chat UI.
+- Keep chat upgrades additive: older devices still receive plain `chat.send` text and unknown `chat.react` messages degrade without crashing.
+- Normalize persisted reply/reaction fields during state migration and document the new chat workflow.
+
 ## v0.7.0
 
 - Add persisted WebRTC ICE configuration with optional STUN/TURN servers and `all`/`relay` transport policy.

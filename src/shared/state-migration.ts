@@ -191,6 +191,30 @@ export function normalizeTaskRecords(tasks: TaskRecord[] = []) {
   });
 }
 
+function normalizeConversationReply(value: unknown) {
+  if (!isRecord(value) || !value.id) return undefined;
+  const type = value.type === 'file' ? 'file' as const : 'text' as const;
+  return {
+    id: String(value.id),
+    type,
+    senderName: value.senderName ? String(value.senderName).slice(0, 80) : undefined,
+    text: value.text ? String(value.text).slice(0, 240) : undefined,
+    name: value.name ? String(value.name).slice(0, 180) : undefined,
+    createdAt: value.createdAt ? Number(value.createdAt) : undefined
+  };
+}
+
+function normalizeConversationReactions(value: unknown) {
+  if (!isRecord(value)) return undefined;
+  const output: Record<string, string[]> = {};
+  for (const [emoji, actors] of Object.entries(value)) {
+    if (!Array.isArray(actors) || !emoji.trim()) continue;
+    const uniqueActors = Array.from(new Set(actors.map((actor) => String(actor || '').trim()).filter(Boolean))).slice(0, 200);
+    if (uniqueActors.length) output[emoji.slice(0, 16)] = uniqueActors;
+  }
+  return Object.keys(output).length ? output : undefined;
+}
+
 export function normalizeConversations(conversations: unknown) {
   if (!isRecord(conversations)) return {};
   const output: Record<string, any[]> = {};
@@ -206,7 +230,12 @@ export function normalizeConversations(conversations: unknown) {
           peerId: String(event.peerId || peerId),
           direction: event.direction === 'outgoing' ? 'outgoing' : 'incoming',
           type: event.type === 'file' ? 'file' : 'text',
-          createdAt
+          createdAt,
+          markdown: event.markdown === true ? true : undefined,
+          replyTo: normalizeConversationReply(event.replyTo),
+          reactions: normalizeConversationReactions(event.reactions),
+          editedAt: event.editedAt ? Number(event.editedAt) : undefined,
+          deletedAt: event.deletedAt ? Number(event.deletedAt) : undefined
         };
       })
       .slice(-MAX_CONVERSATION_EVENTS);

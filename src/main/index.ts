@@ -15,6 +15,7 @@ import {
   APP_VERSION,
   CAPABILITIES,
   CAPABILITY_VERSIONS,
+  CHAT_REACTION_EMOJIS,
   COMMAND_TIMEOUT_MS,
   CONTROL_PROTOCOL_VERSION,
   DEFAULT_CONTROL_PORT,
@@ -892,6 +893,50 @@ function formatBytesForNotification(size = 0) {
   return `${(size / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+function normalizeConversationReplyRef(value: any) {
+  if (!value?.id) return undefined;
+  const type = value.type === 'file' ? 'file' as const : 'text' as const;
+  return {
+    id: String(value.id),
+    type,
+    senderName: value.senderName ? String(value.senderName).slice(0, 80) : undefined,
+    text: value.text ? String(value.text).slice(0, 240) : undefined,
+    name: value.name ? String(value.name).slice(0, 180) : undefined,
+    createdAt: value.createdAt ? Number(value.createdAt) : undefined
+  };
+}
+
+function createChatMessage(text: string, options: any = {}) {
+  const cleanText = String(text || '').trim();
+  if (!cleanText) throw new Error('消息不能为空');
+  return {
+    id: String(options.id || crypto.randomUUID()),
+    text: cleanText,
+    markdown: true,
+    replyTo: normalizeConversationReplyRef(options.replyTo)
+  };
+}
+
+function applyConversationReaction(peerId: string, messageId: string, emoji: string, actorId: string) {
+  const cleanEmoji = CHAT_REACTION_EMOJIS.includes(emoji as any) ? emoji : '';
+  const cleanMessageId = String(messageId || '');
+  const cleanActorId = String(actorId || '');
+  if (!cleanEmoji || !cleanMessageId || !cleanActorId) return false;
+  const event = state.conversations[peerId]?.find((item) => item.id === cleanMessageId);
+  if (!event) return false;
+  const reactions = { ...(event.reactions || {}) } as Record<string, string[]>;
+  const actors = new Set((reactions[cleanEmoji] || []).map(String));
+  if (actors.has(cleanActorId)) actors.delete(cleanActorId);
+  else actors.add(cleanActorId);
+  const nextActors = [...actors];
+  if (nextActors.length) reactions[cleanEmoji] = nextActors;
+  else delete reactions[cleanEmoji];
+  event.reactions = Object.keys(reactions).length ? reactions : undefined;
+  saveState();
+  emitState();
+  return true;
+}
+
 function addConversationEvent(peerId: string, event: any) {
   const { notify, ...storedEvent } = event || {};
   if (storedEvent.direction === 'incoming' && notify !== false) {
@@ -914,6 +959,31 @@ function addConversationEvent(peerId: string, event: any) {
   saveState();
   emitState();
   if (storedEvent.direction === 'incoming' && notify !== false) notifyConversationEvent(peerId, storedEvent);
+}
+
+async function sendChatText(peerId: string, text: string, options: any = {}) {
+  const message = createChatMessage(text, options);
+  await sendControl(peerId, 'chat.send', message);
+  addConversationEvent(peerId, {
+    id: message.id,
+    direction: 'outgoing',
+    type: 'text',
+    text: message.text,
+    markdown: message.markdown,
+    replyTo: message.replyTo,
+    senderName: state.device.name
+  });
+  return appStateView();
+}
+
+async function reactToChatMessage(peerId: string, messageId: string, emoji: string) {
+  const applied = applyConversationReaction(peerId, messageId, emoji, state.device.id);
+  try {
+    await sendControl(peerId, 'chat.react', { messageId, emoji });
+  } catch (error) {
+    logRuntimeError('chat-react-remote', error);
+  }
+  return { applied, state: appStateView() };
 }
 
 function ensureHome() {
@@ -1326,14 +1396,25 @@ function sendControl<T = unknown>(peerId: string, type: string, data: unknown, t
 async function handleControlMessage(payload: { fromId: string; fromName: string; type: string; data: any }) {
   switch (payload.type) {
     case 'chat.send':
-      addConversationEvent(payload.fromId, {
-        direction: 'incoming',
-        type: 'text',
-        text: String(payload.data?.text || ''),
-        senderName: payload.fromName
-      });
+      {
+        const message = createChatMessage(String(payload.data?.text || ''), payload.data || {});
+        addConversationEvent(payload.fromId, {
+          id: message.id,
+          direction: 'incoming',
+          type: 'text',
+          text: message.text,
+          markdown: message.markdown,
+          replyTo: message.replyTo,
+          senderName: payload.fromName
+        });
+      }
       addAudit('chat.receive', '收到聊天消息', payload.fromId, state.device.id);
       return { ok: true, data: appStateView() };
+
+    case 'chat.react':
+      applyConversationReaction(payload.fromId, payload.data?.messageId, String(payload.data?.emoji || ''), payload.fromId);
+      addAudit('chat.react', '收到聊天 reaction', payload.fromId, state.device.id);
+      return { ok: true, data: true };
 
     case 'file.send':
       assertPeerWritable(payload.fromId);
@@ -2953,17 +3034,10 @@ async function handleLocalApi(pathname: string, method: string, body: any) {
     return remoteClipboard(body.peerId, body.action, body.text);
   }
   if (method === 'POST' && pathname === '/api/chat/send') {
-    const text = String(body.text || '').trim();
-    if (!text) throw new Error('消息不能为空');
-    await sendControl(body.peerId, 'chat.send', { text });
-    addConversationEvent(body.peerId, {
-      direction: 'outgoing',
-      type: 'text',
-      text,
-      senderName: state.device.name
-    });
+    await sendChatText(body.peerId, body.text, body);
     return true;
   }
+  if (method === 'POST' && pathname === '/api/chat/react') return reactToChatMessage(body.peerId, body.messageId, body.emoji);
   if (method === 'POST' && pathname === '/api/files/list') {
     return sendControl(body.peerId, 'file.listShared', { relativePath: body.relativePath || '' });
   }
@@ -3257,18 +3331,8 @@ function registerIpc() {
     emitState();
     return appStateView();
   });
-  ipcMain.handle('lch:send-text', async (_event, peerId, text) => {
-    const cleanText = String(text || '').trim();
-    if (!cleanText) return appStateView();
-    await sendControl(peerId, 'chat.send', { text: cleanText });
-    addConversationEvent(peerId, {
-      direction: 'outgoing',
-      type: 'text',
-      text: cleanText,
-      senderName: state.device.name
-    });
-    return appStateView();
-  });
+  ipcMain.handle('lch:send-text', (_event, peerId, text, options) => sendChatText(peerId, text, options || {}));
+  ipcMain.handle('lch:react-message', (_event, peerId, messageId, emoji) => reactToChatMessage(peerId, messageId, emoji));
   ipcMain.handle('lch:send-file', async (_event, peerId, file) => {
     assertPeerWritable(peerId);
     const decoded = decodeFilePayload(file, MAX_FILE_BYTES);

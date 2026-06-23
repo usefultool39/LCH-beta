@@ -27,7 +27,8 @@ declare global {
       revokeDevice: (peerId: string) => Promise<AppStateView>;
       chooseSharedFolder: () => Promise<AppStateView>;
       clearSharedFolder: () => Promise<AppStateView>;
-      sendText: (peerId: string, text: string) => Promise<AppStateView>;
+      sendText: (peerId: string, text: string, options?: { replyTo?: AppStateView['conversations'][string][number]['replyTo'] }) => Promise<AppStateView>;
+      reactToMessage: (peerId: string, messageId: string, emoji: string) => Promise<{ applied: boolean; state: AppStateView }>;
       sendFile: (peerId: string, file: { name: string; size: number; base64: string }) => Promise<AppStateView>;
       listSharedFiles: (peerId: string, relativePath: string) => Promise<unknown>;
       downloadSharedFile: (peerId: string, relativePath: string) => Promise<{ filePath: string; name: string; size: number }>;

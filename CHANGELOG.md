@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.12.1
+
+- Finalize the current daily-use work release after the group conversation sync iteration.
+- Keep runtime behavior unchanged from v0.12.0 while refreshing version metadata, release artifact names, and user-facing deployment notes.
+- Document the current stable working scope: LAN discovery, trusted-device chat, file sharing, PTY terminal, screen viewing/control, configurable WebRTC ICE, and basic group conversation management.
+- Re-run the release validation path so GitHub Latest points to a consolidated package set.
+
 ## v0.12.0
 
 - Add group conversation editing for title and member list from the chat view.

@@ -1,5 +1,5 @@
 export const APP_NAME = 'Lan Control Hub';
-export const APP_VERSION = '0.12.0';
+export const APP_VERSION = '0.12.1';
 export const STATE_SCHEMA_VERSION = 5;
 export const DISCOVERY_PROTOCOL_VERSION = 1;
 export const CONTROL_PROTOCOL_VERSION = 1;

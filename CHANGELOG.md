@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.16.0
+
+- Merge the D-drive Agent Gateway branch back into the main line so the phone UI includes the chat-style Claude Code / MiniMax-M3 control entry.
+- Keep the v0.15.2 full disk access mode so trusted devices can browse visible drives such as `C:` and external disks after the target device owner enables it.
+- Make D:\项目\lan-control-hub the primary local project copy and prepare GitHub Latest Release metadata for the combined build.
+
+## v0.15.2
+
+- Add an explicit full disk access switch for trusted devices so the remote file hub can expose visible drives such as `C:` and external disks.
+- Keep the safer common-folder file library as the default, with legacy state migration leaving full disk access disabled until the device owner enables it.
+- Add Local API and CLI support for checking or changing the local full disk access setting.
+
 ## v0.15.1
 
 - Finalize the current mobile-control checkpoint with consolidated local documentation and release metadata.

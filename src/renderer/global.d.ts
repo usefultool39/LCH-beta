@@ -20,6 +20,7 @@ declare global {
       updateName: (name: string) => Promise<AppStateView>;
       updateDevicePreference: (peerId: string, patch: Partial<DevicePreference>) => Promise<AppStateView>;
       setFileSharing: (enabled: boolean) => Promise<AppStateView>;
+      setFullDiskAccess: (enabled: boolean) => Promise<AppStateView>;
       setAutoTrust: (enabled: boolean) => Promise<AppStateView>;
       setAgentGateway: (enabled: boolean) => Promise<AppStateView>;
       setWebRtcConfig: (config: WebRtcConfig) => Promise<AppStateView>;

@@ -24,6 +24,7 @@ function defaultState() {
     auditLog: [],
     sharedFolder: '',
     fileShareEnabled: true,
+    fullDiskAccessEnabled: false,
     autoTrustDevices: false,
     agentGatewayEnabled: false,
     localApiToken: 'default-token',
@@ -71,7 +72,8 @@ test('migrateState upgrades legacy persisted state without losing usable data', 
     manualPeerAddresses: ['100.64.1.2', { address: '100.64.1.3:46890', status: 'online' }],
     transfers: [{ id: 'transfer-1', peerId: 'peer-1', peerName: 'Peer', name: 'demo.txt', size: 5 }],
     fileShareEnabled: false,
-    agentGatewayEnabled: true
+    agentGatewayEnabled: true,
+    fullDiskAccessEnabled: true
   }, defaultState(), {
     publicKeyHash: () => 'computed-hash'
   });
@@ -81,6 +83,7 @@ test('migrateState upgrades legacy persisted state without losing usable data', 
   assert.equal(migrated.device.publicKeyHash, 'computed-hash');
   assert.equal(migrated.fileShareEnabled, false);
   assert.equal(migrated.agentGatewayEnabled, true);
+  assert.equal(migrated.fullDiskAccessEnabled, true);
   assert.equal(migrated.conversations['peer-1'][0].peerId, 'peer-1');
   assert.equal(migrated.conversations['peer-1'][0].conversationId, 'peer-1');
   assert.equal(migrated.conversations['peer-1'][0].markdown, true);
@@ -134,6 +137,22 @@ test('normalizeConversationRecords preserves group metadata and fills direct met
 test('migrateState falls back to defaults when device identity is missing', () => {
   const defaults = defaultState();
   assert.equal(migrateState({}, defaults), defaults);
+});
+
+test('migrateState keeps full disk access disabled for legacy states', () => {
+  const migrated = migrateState({
+    device: {
+      id: 'device-1',
+      name: 'Desk',
+      platform: 'win32',
+      publicKey: 'public-key',
+      privateKey: 'private-key'
+    }
+  }, defaultState(), {
+    publicKeyHash: () => 'computed-hash'
+  });
+
+  assert.equal(migrated.fullDiskAccessEnabled, false);
 });
 
 test('normalizeManualPeerAddresses removes invalid and duplicate addresses', () => {

@@ -475,6 +475,7 @@ function createDefaultState(): AppState {
     auditLog: [],
     sharedFolder: '',
     fileShareEnabled: true,
+    fullDiskAccessEnabled: false,
     autoTrustDevices: false,
     agentGatewayEnabled: false,
     localApiToken: base64url(crypto.randomBytes(32)),
@@ -886,6 +887,7 @@ function appStateView() {
     auditLog: state.auditLog.slice(-200),
     sharedFolder: state.sharedFolder,
     fileShareEnabled: state.fileShareEnabled,
+    fullDiskAccessEnabled: state.fullDiskAccessEnabled,
     autoTrustDevices: state.autoTrustDevices,
     agentGatewayEnabled: state.agentGatewayEnabled,
     manualPeerAddresses: state.manualPeerAddresses,
@@ -1646,6 +1648,14 @@ function updateDevicePreference(peerId: string, patch: Partial<DevicePreference>
 function setFileSharing(enabled: boolean) {
   state.fileShareEnabled = Boolean(enabled);
   addAudit('files.share', state.fileShareEnabled ? '开启文件库共享' : '关闭文件库共享');
+  saveState();
+  emitState();
+  return appStateView();
+}
+
+function setFullDiskAccess(enabled: boolean) {
+  state.fullDiskAccessEnabled = Boolean(enabled);
+  addAudit('files.fullDisk', state.fullDiskAccessEnabled ? 'Enable full disk file access' : 'Disable full disk file access');
   saveState();
   emitState();
   return appStateView();
@@ -3600,6 +3610,7 @@ type ShareRoot = {
   name: string;
   path: string;
   writable: boolean;
+  system?: boolean;
 };
 
 const DEFAULT_SHARE_ROOTS: Array<{ id: string; name: string; appPath: Parameters<typeof app.getPath>[0] }> = [
@@ -3642,11 +3653,65 @@ function existingShareRoots() {
       writable: true
     });
   }
+  if (state.fullDiskAccessEnabled) {
+    for (const root of systemFileRoots()) addRoot(root);
+  }
   return roots;
 }
 
 function displaySharedPath(root: ShareRoot, relative = '') {
   return relative ? `${root.name}/${relative}` : root.name;
+}
+
+function systemFileRoots(): ShareRoot[] {
+  if (process.platform === 'win32') {
+    const roots: ShareRoot[] = [];
+    for (let code = 65; code <= 90; code += 1) {
+      const letter = String.fromCharCode(code);
+      const rootPath = `${letter}:\\`;
+      try {
+        if (!fs.existsSync(rootPath)) continue;
+        roots.push({
+          id: `${letter}:`,
+          name: `${letter}:`,
+          path: rootPath,
+          writable: true,
+          system: true
+        });
+      } catch {
+        // Ignore drives that exist but cannot be queried by this process.
+      }
+    }
+    return roots;
+  }
+
+  const roots: ShareRoot[] = [{
+    id: 'Root',
+    name: '/',
+    path: '/',
+    writable: true,
+    system: true
+  }];
+
+  if (process.platform === 'darwin') {
+    try {
+      for (const entry of fs.readdirSync('/Volumes', { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const volumePath = path.join('/Volumes', entry.name);
+        roots.push({
+          id: `Volume-${base64url(Buffer.from(entry.name)).slice(0, 16)}`,
+          name: entry.name,
+          path: volumePath,
+          writable: true,
+          system: true
+        });
+      }
+    } catch {
+      // /Volumes may be inaccessible in restricted environments.
+    }
+  }
+
+  return roots;
 }
 
 function resolveSharedPath(relativePath = '') {
@@ -3687,18 +3752,22 @@ function listSharedFolder(relativePath = ''): SharedFolderListing {
   const stat = fs.statSync(target);
   if (!stat.isDirectory()) throw new Error('目标不是文件夹');
   const entries = fs.readdirSync(target, { withFileTypes: true })
-    .map((entry) => {
+    .flatMap((entry) => {
       const itemPath = path.join(target, entry.name);
-      const itemStat = fs.statSync(itemPath);
-      const itemRelative = [root.id, relative, entry.name].filter(Boolean).join('/');
-      return {
-        name: entry.name,
-        relativePath: itemRelative,
-        type: entry.isDirectory() ? 'directory' as const : 'file' as const,
-        size: entry.isDirectory() ? 0 : itemStat.size,
-        modifiedAt: itemStat.mtimeMs,
-        writable: root.writable
-      };
+      try {
+        const itemStat = fs.statSync(itemPath);
+        const itemRelative = [root.id, relative, entry.name].filter(Boolean).join('/');
+        return [{
+          name: entry.name,
+          relativePath: itemRelative,
+          type: itemStat.isDirectory() ? 'directory' as const : 'file' as const,
+          size: itemStat.isDirectory() ? 0 : itemStat.size,
+          modifiedAt: itemStat.mtimeMs,
+          writable: root.writable
+        }];
+      } catch {
+        return [];
+      }
     })
     .sort((a, b) => {
       if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
@@ -4356,6 +4425,25 @@ async function handleLocalApi(pathname: string, method: string, body: any) {
   if (method === 'POST' && pathname === '/api/files/list') {
     return sendControl(body.peerId, 'file.listShared', { relativePath: body.relativePath || '' });
   }
+  if (method === 'GET' && pathname === '/api/files/access') {
+    return {
+      fileShareEnabled: state.fileShareEnabled,
+      fullDiskAccessEnabled: state.fullDiskAccessEnabled
+    };
+  }
+  if (method === 'POST' && pathname === '/api/files/access') {
+    if (body.fileShareEnabled !== undefined) state.fileShareEnabled = Boolean(body.fileShareEnabled);
+    if (body.fullDiskAccessEnabled !== undefined || body.enabled !== undefined) {
+      state.fullDiskAccessEnabled = Boolean(body.fullDiskAccessEnabled ?? body.enabled);
+    }
+    addAudit('files.access', `fileShare=${state.fileShareEnabled}; fullDisk=${state.fullDiskAccessEnabled}`);
+    saveState();
+    emitState();
+    return {
+      fileShareEnabled: state.fileShareEnabled,
+      fullDiskAccessEnabled: state.fullDiskAccessEnabled
+    };
+  }
   if (method === 'POST' && pathname === '/api/files/get') {
     return sendControl(body.peerId, 'file.downloadShared', { relativePath: body.relativePath || '' }, 60000);
   }
@@ -4607,6 +4695,7 @@ function registerIpc() {
   });
   ipcMain.handle('lch:update-device-preference', (_event, peerId, patch) => updateDevicePreference(peerId, patch || {}));
   ipcMain.handle('lch:set-file-sharing', (_event, enabled) => setFileSharing(Boolean(enabled)));
+  ipcMain.handle('lch:set-full-disk-access', (_event, enabled) => setFullDiskAccess(Boolean(enabled)));
   ipcMain.handle('lch:set-auto-trust', (_event, enabled) => setAutoTrustDevices(Boolean(enabled)));
   ipcMain.handle('lch:set-agent-gateway', (_event, enabled) => setAgentGatewayEnabled(Boolean(enabled)));
   ipcMain.handle('lch:set-webrtc-config', (_event, config) => setWebRtcConfig(config || {}));

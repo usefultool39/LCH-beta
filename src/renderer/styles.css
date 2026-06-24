@@ -1300,6 +1300,17 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.fullDiskToggle {
+  margin-top: 12px;
+}
+
+.hintText {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .fileDropZone {
   position: relative;
 }

@@ -1,6 +1,6 @@
 export const APP_NAME = 'Lan Control Hub';
-export const APP_VERSION = '0.15.1';
-export const STATE_SCHEMA_VERSION = 5;
+export const APP_VERSION = '0.16.0';
+export const STATE_SCHEMA_VERSION = 6;
 export const DISCOVERY_PROTOCOL_VERSION = 1;
 export const CONTROL_PROTOCOL_VERSION = 1;
 export const MIN_SUPPORTED_PROTOCOL_VERSION = 1;
@@ -350,6 +350,7 @@ export interface AppStateView {
   auditLog: AuditEvent[];
   sharedFolder: string;
   fileShareEnabled: boolean;
+  fullDiskAccessEnabled: boolean;
   autoTrustDevices: boolean;
   agentGatewayEnabled: boolean;
   manualPeerAddresses: ManualPeerAddress[];

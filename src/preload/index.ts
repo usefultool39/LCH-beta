@@ -18,6 +18,7 @@ const api = {
   updateName: (name: string) => ipcRenderer.invoke('lch:update-name', name),
   updateDevicePreference: (peerId: string, patch: unknown) => ipcRenderer.invoke('lch:update-device-preference', peerId, patch),
   setFileSharing: (enabled: boolean) => ipcRenderer.invoke('lch:set-file-sharing', enabled),
+  setFullDiskAccess: (enabled: boolean) => ipcRenderer.invoke('lch:set-full-disk-access', enabled),
   setAutoTrust: (enabled: boolean) => ipcRenderer.invoke('lch:set-auto-trust', enabled),
   setAgentGateway: (enabled: boolean) => ipcRenderer.invoke('lch:set-agent-gateway', enabled),
   setWebRtcConfig: (config: unknown) => ipcRenderer.invoke('lch:set-webrtc-config', config),

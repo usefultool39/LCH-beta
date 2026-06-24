@@ -111,6 +111,19 @@ lch terminal 远端测试机
 lch file list --device 远端测试机
 ```
 
+查看或开启本机完整磁盘访问：
+
+```bash
+lch file access status
+lch file access on
+```
+
+目标电脑开启后，可以用盘符浏览：
+
+```bash
+lch file list --device 远端测试机 "C:/"
+```
+
 下载：
 
 ```bash

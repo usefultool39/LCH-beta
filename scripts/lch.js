@@ -133,6 +133,7 @@ function usage() {
     '  lch file get --device <name|ip|alias|id-prefix> <remotePath> [--out localPath]',
     '  lch file put --device <name|ip|alias|id-prefix> <localPath> [remoteDirectory]',
     '  lch file send --device <name|ip|alias|id-prefix> <localPath>',
+    '  lch file access [status|on|off]',
     '  lch transfer list [--json]',
     '  lch transfer cancel <transferId>',
     '  lch peer add <tailscale-ip[:port]>',
@@ -593,8 +594,23 @@ async function windowsCommand(args) {
 
 async function fileCommand(args) {
   const action = args.shift();
-  if (!['list', 'get', 'put', 'send'].includes(action)) {
-    throw new Error('Usage: lch file list|get|put|send --device <id> ...');
+  if (!['list', 'get', 'put', 'send', 'access'].includes(action)) {
+    throw new Error('Usage: lch file list|get|put|send --device <id> ... | lch file access [status|on|off]');
+  }
+  if (action === 'access') {
+    const mode = String(args.shift() || 'status').toLowerCase();
+    if (mode === 'status') {
+      const status = await request('GET', '/api/files/access');
+      jsonOutput ? printJson(status) : printTable([status]);
+      return;
+    }
+    if (!['on', 'off', 'true', 'false', '1', '0'].includes(mode)) {
+      throw new Error('Usage: lch file access [status|on|off]');
+    }
+    const enabled = ['on', 'true', '1'].includes(mode);
+    const status = await request('POST', '/api/files/access', { fullDiskAccessEnabled: enabled });
+    jsonOutput ? printJson(status) : printTable([status]);
+    return;
   }
   const peerId = await deviceFromArgs(args);
   if (action === 'list') {

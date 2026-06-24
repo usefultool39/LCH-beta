@@ -6,6 +6,7 @@ const { cleanSharedPath, resolveInsideRoot } = require('../dist/shared/shared-pa
 
 test('cleanSharedPath normalizes separators', () => {
   assert.equal(cleanSharedPath('\\Downloads//demo.txt'), 'Downloads/demo.txt');
+  assert.equal(cleanSharedPath('C:\\Users\\demo'), 'C:/Users/demo');
 });
 
 test('resolveInsideRoot keeps paths inside the root', () => {

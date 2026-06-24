@@ -988,6 +988,7 @@ function FilesView({
   onChooseFolder,
   onClearFolder,
   onSetFileSharing,
+  onSetFullDiskAccess,
   onListRemote,
   onPreview,
   onDownload,
@@ -998,6 +999,7 @@ function FilesView({
   onChooseFolder: () => void;
   onClearFolder: () => void;
   onSetFileSharing: (enabled: boolean) => void;
+  onSetFullDiskAccess: (enabled: boolean) => void;
   onListRemote: (path: string) => Promise<SharedFolderListing>;
   onPreview: (path: string) => Promise<PreviewToken>;
   onUpload: (path: string, file: File) => Promise<void>;
@@ -1125,6 +1127,7 @@ function FilesView({
           </div>
           <div className="shareRootList">
             <div><HardDrive size={16} /><span>桌面、下载、文档、图片、视频、音乐</span></div>
+            <div><HardDrive size={16} /><span>{state.fullDiskAccessEnabled ? '完整磁盘访问已开启：远端可看到本机盘符和外接盘' : '完整磁盘访问未开启：远端只看到常用目录'}</span></div>
             {state.sharedFolder ? <div><FolderOpen size={16} /><span>{state.sharedFolder}</span></div> : null}
           </div>
           <div className="rowActions">
@@ -1135,6 +1138,16 @@ function FilesView({
             <button className="secondary" onClick={onChooseFolder}><FolderOpen size={16} /> 自选目录</button>
             <button className="secondary" disabled={!state.sharedFolder} onClick={onClearFolder}><Trash2 size={16} /> 移除自选</button>
           </div>
+          <label className="toggleLine fullDiskToggle">
+            <input
+              type="checkbox"
+              checked={Boolean(state.fullDiskAccessEnabled)}
+              disabled={!state.fileShareEnabled}
+              onChange={(event) => onSetFullDiskAccess(event.target.checked)}
+            />
+            允许可信设备浏览本机所有可见磁盘
+          </label>
+          <p className="hintText">开启后，远端文件根目录会显示 C:、D: 等盘符。系统目录仍受 Windows/macOS 权限限制，需要管理员权限的目录必须在目标电脑用管理员身份启动 App。</p>
         </section>
         <section
           className={`panel remotePanel fileDropZone ${dragging ? 'dragging' : ''}`}
@@ -2688,6 +2701,7 @@ function App() {
           onChooseFolder={() => run(() => api.chooseSharedFolder())}
           onClearFolder={() => run(() => api.clearSharedFolder())}
           onSetFileSharing={(enabled) => run(() => api.setFileSharing(enabled))}
+          onSetFullDiskAccess={(enabled) => run(() => api.setFullDiskAccess(enabled))}
           onListRemote={(relativePath) => api.listSharedFiles(selectedPeer!.id, relativePath) as Promise<SharedFolderListing>}
           onPreview={(relativePath) => api.previewSharedFile(selectedPeer!.id, relativePath)}
           onDownload={(relativePath) => run(() => api.downloadSharedFile(selectedPeer!.id, relativePath)) as Promise<{ filePath: string; name: string; size: number } | void>}

@@ -290,6 +290,12 @@ label > span {
   gap: 9px;
 }
 
+.agentControls {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 9px;
+}
+
 .primaryWide {
   background: var(--primary);
 }
@@ -469,14 +475,25 @@ pre {
   line-height: 1.45;
 }
 
+.agentForm {
+  display: grid;
+  gap: 12px;
+}
+
+.agentOutput {
+  min-height: 260px;
+  max-height: 44vh;
+  margin-top: 0;
+  background: #111827;
+}
+
 .bottomNav {
   position: fixed;
   z-index: 10;
   right: 0;
   bottom: 0;
   left: 0;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: flex;
   gap: 6px;
   width: min(100%, 560px);
   margin: 0 auto;
@@ -487,8 +504,11 @@ pre {
 }
 
 .bottomNav button {
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 44px;
   border: 1px solid transparent;
+  padding: 0 6px;
   color: #475569;
   background: transparent;
   font-size: 13px;
@@ -517,7 +537,8 @@ pre {
   }
 
   .toolbarLine,
-  .voiceControls {
+  .voiceControls,
+  .agentControls {
     grid-template-columns: 1fr;
   }
 }

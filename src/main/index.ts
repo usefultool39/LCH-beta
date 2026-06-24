@@ -42,6 +42,7 @@ import {
   NetworkInfo,
   PEER_TIMEOUT_MS,
   STATE_SCHEMA_VERSION,
+  Platform,
   PeerInfo,
   RemoteInputEvent,
   RemoteOpenResult,
@@ -143,6 +144,7 @@ const remoteSessions = new Map<string, RemoteSessionRecord>();
 const remoteSessionWindows = new Map<string, BrowserWindow>();
 const remoteWindowClosingByMain = new Set<string>();
 const localSseClients = new Set<http.ServerResponse>();
+const mobileSessions = new Map<string, { name: string; address: string; createdAt: number; lastSeenAt: number }>();
 const controlReplayGuard = new ControlReplayGuard();
 const sharedDownloadTokens = new Map<string, SharedDownloadToken>();
 const sharedUploadTokens = new Map<string, SharedUploadToken>();
@@ -150,6 +152,13 @@ const transferAbortControllers = new Map<string, AbortController>();
 const presenceRateLimit = new Map<string, { windowStart: number; count: number }>();
 let remoteInputChain: Promise<unknown> = Promise.resolve();
 let nutRuntime: Promise<any> | null = null;
+const MOBILE_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const MOBILE_ACTIONS = [
+  { id: 'connection-test', label: '连接测试', danger: false },
+  { id: 'network-info', label: '查看网络', danger: false },
+  { id: 'open-downloads', label: '打开下载目录', danger: false },
+  { id: 'lock-screen', label: '锁定屏幕', danger: true }
+] as const;
 
 process.on('uncaughtException', (error) => {
   logRuntimeError('uncaughtException', error);
@@ -821,6 +830,277 @@ function appStateView() {
     networkInfo: networkInfo(),
     webrtc: state.webrtc
   };
+}
+
+function compactDeviceCode(id: string, prefix = 'PC') {
+  return `${prefix}-${String(id || '').replace(/-/g, '').slice(0, 6).toUpperCase() || '------'}`;
+}
+
+function mobilePeerView(peer: ReturnType<typeof serializePeers>[number]) {
+  return {
+    id: peer.id,
+    code: compactDeviceCode(peer.id),
+    name: peer.name,
+    displayName: peer.displayName || peer.name,
+    platform: peer.platform,
+    address: peer.address,
+    controlPort: peer.controlPort,
+    webPort: peer.webPort,
+    appVersion: peer.appVersion,
+    capabilities: peer.capabilities,
+    trusted: peer.trusted,
+    isOnline: peer.isOnline,
+    uiStatus: peer.uiStatus,
+    favorite: peer.favorite,
+    readOnly: peer.readOnly,
+    isSelf: false
+  };
+}
+
+function mobileTaskView(task: TaskRecord) {
+  return {
+    id: task.id,
+    peerId: task.peerId,
+    peerName: task.peerName,
+    status: task.status,
+    exitCode: task.exitCode,
+    startedAt: task.startedAt,
+    endedAt: task.endedAt,
+    output: task.output.slice(-4000),
+    errorOutput: task.errorOutput.slice(-4000)
+  };
+}
+
+function mobileStateView() {
+  const peersView = serializePeers().map(mobilePeerView);
+  return {
+    appName: APP_NAME,
+    appVersion: APP_VERSION,
+    home: state.home ? {
+      id: state.home.id,
+      code: compactDeviceCode(state.home.id, 'ROOM'),
+      name: state.home.name,
+      createdAt: state.home.createdAt,
+      isOwner: state.home.createdByDeviceId === state.device.id
+    } : null,
+    device: {
+      id: state.device.id,
+      code: compactDeviceCode(state.device.id),
+      name: state.device.name,
+      platform: state.device.platform,
+      controlPort,
+      webPort,
+      isSelf: true
+    },
+    devices: [
+      {
+        id: state.device.id,
+        code: compactDeviceCode(state.device.id, 'THIS'),
+        name: state.device.name,
+        displayName: state.device.name,
+        platform: state.device.platform,
+        address: 'gateway',
+        controlPort,
+        webPort,
+        appVersion: APP_VERSION,
+        capabilities: CAPABILITIES,
+        trusted: true,
+        isOnline: true,
+        uiStatus: 'online' as const,
+        favorite: true,
+        readOnly: false,
+        isSelf: true
+      },
+      ...peersView
+    ],
+    actions: MOBILE_ACTIONS,
+    tasks: state.tasks.slice(0, 30).map(mobileTaskView),
+    network: {
+      webPort,
+      controlPort,
+      hostName: os.hostname()
+    }
+  };
+}
+
+function pruneMobileSessions() {
+  const now = Date.now();
+  for (const [token, sessionItem] of mobileSessions) {
+    if (now - sessionItem.lastSeenAt > MOBILE_SESSION_TTL_MS) mobileSessions.delete(token);
+  }
+}
+
+function mobileSessionFromRequest(req: http.IncomingMessage) {
+  pruneMobileSessions();
+  const header = String(req.headers.authorization || '');
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (!match) return null;
+  const token = match[1].trim();
+  const sessionItem = mobileSessions.get(token);
+  if (!sessionItem) return null;
+  sessionItem.lastSeenAt = Date.now();
+  return { token, ...sessionItem };
+}
+
+function requireMobileSession(req: http.IncomingMessage) {
+  const sessionItem = mobileSessionFromRequest(req);
+  if (!sessionItem) throw new Error('Mobile session unauthorized');
+  return sessionItem;
+}
+
+function createMobileSession(name: string, req: http.IncomingMessage) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const now = Date.now();
+  mobileSessions.set(token, {
+    name: String(name || 'Mobile').trim().slice(0, 40) || 'Mobile',
+    address: req.socket.remoteAddress || '',
+    createdAt: now,
+    lastSeenAt: now
+  });
+  return token;
+}
+
+function mobileActionCommand(actionId: string, platform: Platform) {
+  if (actionId === 'connection-test') return 'hostname; whoami';
+  if (actionId === 'network-info') {
+    if (platform === 'win32') return 'Get-NetIPConfiguration | Select-Object -First 6 InterfaceAlias,IPv4Address,IPv4DefaultGateway | Format-List';
+    return 'ifconfig 2>/dev/null | head -80 || ip addr';
+  }
+  if (actionId === 'open-downloads') {
+    if (platform === 'win32') return 'Start-Process shell:Downloads';
+    if (platform === 'darwin') return 'open "$HOME/Downloads"';
+    return 'xdg-open "$HOME/Downloads"';
+  }
+  if (actionId === 'lock-screen') {
+    if (platform === 'win32') return 'rundll32.exe user32.dll,LockWorkStation';
+    if (platform === 'darwin') return '/System/Library/CoreServices/Menu\\ Extras/User.menu/Contents/Resources/CGSession -suspend';
+    return 'loginctl lock-session';
+  }
+  throw new Error('Unknown mobile action');
+}
+
+function mobileActionInfo(actionId: string) {
+  const action = MOBILE_ACTIONS.find((item) => item.id === actionId);
+  if (!action) throw new Error('Unknown mobile action');
+  return action;
+}
+
+function mobileTargets(peerIds: unknown) {
+  const requested = new Set(Array.isArray(peerIds) ? peerIds.map((id) => String(id || '').trim()).filter(Boolean) : []);
+  const peersView = serializePeers();
+  const allowed = [
+    { id: state.device.id, platform: state.device.platform, isSelf: true, isOnline: true, trusted: true, readOnly: false },
+    ...peersView.map((peer) => ({
+      id: peer.id,
+      platform: peer.platform,
+      isSelf: false,
+      isOnline: peer.isOnline,
+      trusted: peer.trusted,
+      readOnly: peer.readOnly
+    }))
+  ].filter((target) => target.isOnline && target.trusted && !target.readOnly);
+  const targets = requested.size ? allowed.filter((target) => requested.has(target.id)) : allowed;
+  if (!targets.length) throw new Error('No writable online mobile target');
+  return targets;
+}
+
+async function runMobileAction(body: any, req: http.IncomingMessage) {
+  const sessionItem = requireMobileSession(req);
+  const action = mobileActionInfo(String(body?.actionId || ''));
+  const targets = mobileTargets(body?.peerIds);
+  const taskIds: string[] = [];
+  for (const target of targets) {
+    const command = mobileActionCommand(action.id, target.platform);
+    if (target.isSelf) {
+      const result = startLocalTask(state.device.id, sessionItem.name, {
+        requestId: crypto.randomUUID(),
+        command
+      });
+      taskIds.push(result.remoteTaskId);
+    } else {
+      const result = await runRemoteCommand([target.id], command);
+      taskIds.push(...result.taskIds);
+    }
+  }
+  addAudit('mobile.action', `${sessionItem.name} 执行 ${action.label}`, state.device.id, state.device.id);
+  saveState();
+  emitState();
+  return { action, taskIds };
+}
+
+async function handleMobileApi(pathname: string, method: string, body: any, req: http.IncomingMessage) {
+  if (method === 'GET' && pathname === '/mobile-api/status') {
+    return {
+      appName: APP_NAME,
+      appVersion: APP_VERSION,
+      home: state.home ? { id: state.home.id, name: state.home.name } : null,
+      device: { id: state.device.id, name: state.device.name },
+      requiresLogin: true
+    };
+  }
+  if (method === 'POST' && pathname === '/mobile-api/login') {
+    if (!state.home) throw new Error('This device has not joined a room');
+    const secret = String(body?.secret || '').trim();
+    if (!secret || secret !== state.home.secret) throw new Error('Room secret is incorrect');
+    const token = createMobileSession(body?.name, req);
+    addAudit('mobile.login', `${body?.name || 'Mobile'} 登录移动控制台`, state.device.id, state.device.id);
+    return {
+      token,
+      expiresInMs: MOBILE_SESSION_TTL_MS,
+      state: mobileStateView()
+    };
+  }
+  if (method === 'POST' && pathname === '/mobile-api/logout') {
+    const sessionItem = mobileSessionFromRequest(req);
+    if (sessionItem) mobileSessions.delete(sessionItem.token);
+    return true;
+  }
+  requireMobileSession(req);
+  if (method === 'GET' && pathname === '/mobile-api/state') return mobileStateView();
+  if (method === 'GET' && pathname === '/mobile-api/actions') return MOBILE_ACTIONS;
+  if (method === 'GET' && pathname === '/mobile-api/tasks') return state.tasks.slice(0, 30).map(mobileTaskView);
+  if (method === 'POST' && pathname === '/mobile-api/actions/run') return runMobileAction(body, req);
+  throw new Error('Unknown Mobile API route');
+}
+
+function mobileRootPath() {
+  const candidates = [
+    path.join(app.getAppPath(), 'mobile'),
+    path.resolve(__dirname, '..', '..', 'mobile'),
+    path.join(process.cwd(), 'mobile')
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
+}
+
+function mobileContentType(filePath: string) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.html') return 'text/html; charset=utf-8';
+  if (ext === '.css') return 'text/css; charset=utf-8';
+  if (ext === '.js') return 'application/javascript; charset=utf-8';
+  if (ext === '.json' || ext === '.webmanifest') return 'application/manifest+json; charset=utf-8';
+  if (ext === '.png') return 'image/png';
+  if (ext === '.svg') return 'image/svg+xml; charset=utf-8';
+  return 'application/octet-stream';
+}
+
+function serveMobileAsset(pathname: string, res: http.ServerResponse) {
+  const root = mobileRootPath();
+  const raw = pathname === '/mobile' || pathname === '/mobile/' ? 'index.html' : decodeURIComponent(pathname.replace(/^\/mobile\/?/, ''));
+  const relative = path.normalize(raw || 'index.html');
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    sendJson(res, 404, { ok: false, error: 'Not found' });
+    return;
+  }
+  const target = path.join(root, relative);
+  if (!target.toLowerCase().startsWith(root.toLowerCase()) || !fs.existsSync(target) || !fs.statSync(target).isFile()) {
+    sendJson(res, 404, { ok: false, error: 'Not found' });
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': mobileContentType(target),
+    'Cache-Control': relative === 'index.html' ? 'no-cache' : 'public, max-age=300'
+  });
+  res.end(fs.readFileSync(target));
 }
 
 function emitState() {
@@ -3356,8 +3636,23 @@ function streamSharedUpload(req: http.IncomingMessage, res: http.ServerResponse,
 function startWebServer() {
   return new Promise<void>((resolve, reject) => {
     function listen(port: number) {
-      const server = http.createServer((req, res) => {
+      const server = http.createServer(async (req, res) => {
         const url = new URL(req.url || '/', `http://127.0.0.1:${port}`);
+        try {
+          if ((req.method === 'GET' || req.method === 'HEAD') && (url.pathname === '/mobile' || url.pathname.startsWith('/mobile/'))) {
+            serveMobileAsset(url.pathname, res);
+            return;
+          }
+          if (url.pathname.startsWith('/mobile-api/')) {
+            const body = req.method === 'GET' ? {} : await readJsonBody(req);
+            const data = await handleMobileApi(url.pathname, req.method || 'GET', body, req);
+            sendJson(res, 200, { ok: true, data });
+            return;
+          }
+        } catch (err: any) {
+          sendJson(res, err?.message === 'Mobile session unauthorized' ? 401 : 400, { ok: false, error: err?.message || String(err) });
+          return;
+        }
         if (req.method === 'GET' && url.pathname === '/api/presence') {
           if (!allowPresenceRequest(req)) {
             sendJson(res, 429, { ok: false, error: 'Too many presence requests' });

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.14.0
+
+- Add a standalone `mobile/` Web/PWA control console served from `/mobile/` on the LAN Web port.
+- Add a mobile-only API under `/mobile-api/*` with in-memory mobile sessions, sanitized state, and whitelist-only quick actions.
+- Document the mobile LAN flow and the Tailscale gateway model where one computer relays phone actions to other trusted LAN devices.
+
 ## v0.13.0
 
 - Add a LAN room lobby on first launch: scan nearby Lan Control Hub rooms, select one, then enter the room password/join key.

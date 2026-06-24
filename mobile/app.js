@@ -6,18 +6,13 @@ const state = {
   token: localStorage.getItem(storeKey) || '',
   data: null,
   actions: [],
-  commandPresets: [],
   agentSession: null,
   agentTargetId: localStorage.getItem(agentTargetKey) || '',
   selected: new Set(),
   tasks: [],
   tab: localStorage.getItem('lch.mobile.tab.v1') || 'home',
-  commandText: '',
   agentInput: '',
-  commandMode: 'selected',
-  cwd: '',
   voiceText: '',
-  voiceListening: false,
   agentVoiceListening: false,
   agentBusy: false,
   busy: false,
@@ -154,15 +149,13 @@ async function loadAll() {
     return;
   }
   try {
-    const [mobileState, actions, commandPresets, tasks] = await Promise.all([
+    const [mobileState, actions, tasks] = await Promise.all([
       api('/state'),
       api('/actions'),
-      api('/commands/presets'),
       api('/tasks')
     ]);
     state.data = mobileState;
     state.actions = actions;
-    state.commandPresets = commandPresets || mobileState.commandPresets || [];
     state.tasks = tasks;
     syncAgentTarget();
     if (agentGatewayEnabled()) {
@@ -198,44 +191,6 @@ async function runAction(actionId) {
       method: 'POST',
       body: { actionId, peerIds }
     });
-    state.tab = 'tasks';
-    await loadAll();
-  } catch (error) {
-    setError(error);
-  } finally {
-    state.busy = false;
-    render();
-  }
-}
-
-async function runCommand(event) {
-  event?.preventDefault();
-  if (!agentGatewayEnabled()) {
-    setError('Agent Gateway 未开启，手机端命令入口已收起');
-    return;
-  }
-  const command = String(state.commandText || document.querySelector('#commandText')?.value || '').trim();
-  if (!command) {
-    setError('先输入要执行的命令');
-    return;
-  }
-  const target = targetText(state.commandMode);
-  if (!window.confirm(`确认在「${target}」执行这条命令？\n\n${command.slice(0, 300)}`)) return;
-  state.busy = true;
-  state.error = '';
-  render();
-  try {
-    await api('/commands/run', {
-      method: 'POST',
-      body: {
-        command,
-        mode: state.commandMode,
-        peerIds: selectedIds(),
-        cwd: state.cwd,
-        confirm: true
-      }
-    });
-    state.commandText = command;
     state.tab = 'tasks';
     await loadAll();
   } catch (error) {
@@ -370,16 +325,6 @@ async function selectAgentTarget(deviceId) {
   render();
 }
 
-function applyPreset(id) {
-  if (!agentGatewayEnabled()) return;
-  const preset = state.commandPresets.find((item) => item.id === id);
-  if (!preset) return;
-  state.agentInput = preset.command;
-  state.tab = 'agent';
-  render();
-  document.querySelector('#agentInput')?.focus();
-}
-
 function renderLogin() {
   app.className = 'appShell loginShell';
   app.innerHTML = `
@@ -460,7 +405,7 @@ function renderTabContent(onlineCount, selectedCount) {
 function renderHome(onlineCount, selectedCount) {
   const gateway = gatewayDevice();
   const gatewayStatus = agentGatewayEnabled()
-    ? `当前目标：${targetText(state.commandMode)}`
+    ? '高级模式：控制页可选择 CLI 可用设备进行聊天式控制。'
     : '基础模式：快捷动作只作用于网关本机，命令入口已收起。';
   return `
     <section class="summaryPanel">
@@ -631,70 +576,6 @@ function renderAgentMessage(message) {
   `;
 }
 
-function renderCommand() {
-  if (!agentGatewayEnabled()) {
-    return `
-      <section class="panelBlock">
-        <div class="panelTitle">
-          <div>
-            <h2>命令和智能体</h2>
-            <p>Agent Gateway 未开启，手机端命令入口已收起。</p>
-          </div>
-        </div>
-        <p class="helperText">需要在桌面端设置 / 系统 / 高级工具中手动开启。</p>
-      </section>
-    `;
-  }
-  return `
-    <section class="panelBlock commandPanel">
-      <div class="panelTitle">
-        <div>
-          <h2>命令和智能体</h2>
-          <p>手机输入命令，由网关电脑执行，或通过 LCH 转发到其它设备</p>
-        </div>
-      </div>
-
-      <div class="modeSwitch" role="group" aria-label="命令目标">
-        ${renderModeButton('gateway', '网关本机')}
-        ${renderModeButton('selected', '选中设备')}
-        ${renderModeButton('all', '全部在线')}
-      </div>
-
-      <form id="commandForm" class="commandForm">
-        <label>
-          <span>命令</span>
-          <textarea id="commandText" rows="5" placeholder="例如：hostname">${escapeHtml(state.commandText)}</textarea>
-        </label>
-        <label>
-          <span>工作目录，可不填</span>
-          <input id="cwdInput" value="${escapeAttr(state.cwd)}" placeholder="默认使用用户目录" />
-        </label>
-        <div class="voiceControls">
-          <button type="button" id="voiceButton" class="secondary">${state.voiceListening ? '正在听' : '语音填入'}</button>
-          <button type="submit" class="primaryWide" ${state.busy ? 'disabled' : ''}>${state.busy ? '执行中' : '执行命令'}</button>
-        </div>
-      </form>
-      <p class="helperText">执行前会再次确认。不要在手机端粘贴不可信脚本；高风险操作建议先在电脑端确认。</p>
-    </section>
-
-    <section class="panelBlock">
-      <div class="panelTitle">
-        <div>
-          <h2>常用预设</h2>
-          <p>点一下填入控制输入框，确认后再发送</p>
-        </div>
-      </div>
-      <div class="presetList">
-        ${state.commandPresets.map(renderPreset).join('')}
-      </div>
-    </section>
-  `;
-}
-
-function renderModeButton(mode, label) {
-  return `<button type="button" class="${state.commandMode === mode ? 'active' : ''}" data-mode="${mode}">${label}</button>`;
-}
-
 function renderTasks() {
   return `
     <section class="panelBlock">
@@ -740,15 +621,6 @@ function renderAction(action) {
   `;
 }
 
-function renderPreset(preset) {
-  return `
-    <button class="presetButton" data-preset="${escapeAttr(preset.id)}">
-      <strong>${escapeHtml(preset.label)}</strong>
-      <span>${escapeHtml(preset.description || preset.command)}</span>
-    </button>
-  `;
-}
-
 function renderTask(task) {
   const output = [task.output, task.errorOutput].filter(Boolean).join('\n').slice(-3000);
   return `
@@ -771,19 +643,12 @@ function bindEvents() {
   document.querySelector('#refreshTasksButton')?.addEventListener('click', loadAll);
   document.querySelector('#selectAllButton')?.addEventListener('click', selectAllDevices);
   document.querySelector('#clearDevicesButton')?.addEventListener('click', clearDevices);
-  document.querySelector('#commandForm')?.addEventListener('submit', runCommand);
   document.querySelector('#agentForm')?.addEventListener('submit', sendAgentInput);
   document.querySelector('#startAgentButton')?.addEventListener('click', startAgent);
   document.querySelector('#stopAgentButton')?.addEventListener('click', stopAgent);
   document.querySelector('#refreshAgentButton')?.addEventListener('click', loadAll);
-  document.querySelector('#commandText')?.addEventListener('input', (event) => {
-    state.commandText = event.currentTarget.value;
-  });
   document.querySelector('#agentInput')?.addEventListener('input', (event) => {
     state.agentInput = event.currentTarget.value;
-  });
-  document.querySelector('#cwdInput')?.addEventListener('input', (event) => {
-    state.cwd = event.currentTarget.value;
   });
   document.querySelector('#voiceButton')?.addEventListener('click', startAgentVoice);
   document.querySelector('#agentVoiceButton')?.addEventListener('click', startAgentVoice);
@@ -794,12 +659,6 @@ function bindEvents() {
   document.querySelectorAll('[data-tab]').forEach((button) => {
     button.addEventListener('click', () => setTab(button.dataset.tab));
   });
-  document.querySelectorAll('[data-mode]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.commandMode = button.dataset.mode;
-      render();
-    });
-  });
   document.querySelectorAll('[data-device]').forEach((input) => {
     input.addEventListener('change', (event) => toggleDevice(event.currentTarget.dataset.device, event.currentTarget.checked));
   });
@@ -808,9 +667,6 @@ function bindEvents() {
   });
   document.querySelectorAll('[data-action]').forEach((button) => {
     button.addEventListener('click', () => runAction(button.dataset.action));
-  });
-  document.querySelectorAll('[data-preset]').forEach((button) => {
-    button.addEventListener('click', () => applyPreset(button.dataset.preset));
   });
 }
 
@@ -850,12 +706,6 @@ function startAgentVoice() {
     render();
   };
   recognition.start();
-}
-
-function targetText(mode) {
-  if (mode === 'gateway') return gatewayDevice()?.displayName || gatewayDevice()?.name || '网关本机';
-  if (mode === 'all') return `全部在线可信设备（${writableDevices().length} 台）`;
-  return `选中设备（${selectedDevices().length} 台）`;
 }
 
 function escapeHtml(value) {

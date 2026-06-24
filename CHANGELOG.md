@@ -2,9 +2,11 @@
 
 ## v0.15.1
 
-- Finalize the current mobile-command checkpoint with consolidated local documentation and release metadata.
-- Add a stage summary for the current LAN, mobile, Tailscale gateway, CLI/Agent, safety, and testing scope.
-- Keep runtime behavior unchanged from v0.15.0 while preparing a clean latest release for user testing.
+- Finalize the current mobile-control checkpoint with consolidated local documentation and release metadata.
+- Keep core LCH LAN behavior isolated: discovery, trust, chat, files, remote command, PTY terminal, screen viewing/control, WebRTC, Local API, and `lch` CLI remain on their existing paths.
+- Gate the phone Agent path behind Agent Gateway and make the mobile control UI chat-first instead of shell-command-first.
+- Add mobile Agent device selection: phones can see all trusted devices and their status, but only devices marked `CLI 可用` can receive Claude Code / MiniMax-M3 chat input.
+- Mark unconfigured devices as `CLI 未配置` so natural language like “你好” is not misrouted into remote shell execution.
 
 ## v0.15.0
 

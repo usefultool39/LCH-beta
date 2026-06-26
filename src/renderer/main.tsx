@@ -229,7 +229,7 @@ function peerSearchText(peer: PeerInfo) {
 function routeBadges(peer: PeerInfo) {
   return peer.networkRoutes?.length ? peer.networkRoutes : [{
     kind: /^100\./.test(peer.address) ? 'tailnet' as const : 'lan' as const,
-    label: /^100\./.test(peer.address) ? 'Tailscale' : '局域网',
+    label: /^100\./.test(peer.address) ? 'Tailscale入口' : '局域网入口',
     host: peer.address,
     controlPort: peer.controlPort,
     webPort: peer.webPort,
@@ -402,7 +402,7 @@ function SetupScreen({
   onJoin: (secret: string, name: string, expectedHomeId?: string) => void;
   onScanRooms: () => Promise<unknown> | void;
 }) {
-  const [name, setName] = useState('我的局域网房间');
+  const [name, setName] = useState('我的 LCH 房间');
   const [secret, setSecret] = useState('');
   const [selectedRoomId, setSelectedRoomId] = useState('');
   const [scanning, setScanning] = useState(false);
@@ -430,13 +430,13 @@ function SetupScreen({
       <section className="setupHero">
         <div className="setupBrand"><Home size={34} /> Lan Control Hub</div>
         <h1>用同一个房间密钥连接你的电脑</h1>
-        <p>同一局域网会自动发现房间；不同网络先加入同一房间，进入设置后再添加 Tailscale IP。设备控制仍需要双方信任。</p>
+        <p>房间是同一套加入密钥和信任关系；局域网 192.x、Tailscale 100.x 只是连接入口。不同网络先加入同一房间，再添加 Tailscale IP。</p>
       </section>
       <section className="setupPanel">
         <div className="setupPanelHeader">
           <div>
             <h2>加入或创建房间</h2>
-            <p>同一局域网可直接扫描加入；跨网设备用同一个房间密钥加入后，在设置里添加 Tailscale 地址。</p>
+            <p>同一局域网可扫描到附近入口；跨网设备使用同一个房间密钥加入后，在设置里添加 Tailscale 100.x 地址。</p>
           </div>
           <button className="secondary" disabled={scanning} onClick={scanRooms}><RefreshCw size={16} /> {scanning ? '扫描中' : '扫描'}</button>
         </div>
@@ -449,10 +449,10 @@ function SetupScreen({
               onClick={() => setSelectedRoomId(room.homeId)}
             >
               <span className="roomScanTitle">{room.displayName}</span>
-              <span>{roomCode(room.homeId)} · {room.deviceCount} 台设备 · {room.hostAddress}:{room.webPort}</span>
+              <span>{roomCode(room.homeId)} · {room.deviceCount} 台设备 · 局域网入口 {room.hostAddress}:{room.webPort}</span>
             </button>
           )) : (
-            <div className="empty small">还没有扫到附近房间。确认已有电脑打开了 Lan Control Hub，或直接创建新房间。</div>
+            <div className="empty small">还没有扫到附近局域网入口。确认已有电脑打开了 Lan Control Hub，或直接创建新房间。</div>
           )}
         </div>
         <div className="field">
@@ -460,7 +460,7 @@ function SetupScreen({
           <textarea value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="从房主电脑复制房间密码，粘贴到这里" />
         </div>
         <button className="primary wide" disabled={!secret.trim()} onClick={joinSelectedRoom}>
-          <KeyRound size={16} /> 加入选中的局域网房间
+          <KeyRound size={16} /> 加入选中的房间
         </button>
         <div className="divider">或者</div>
         <div className="field">
@@ -1620,7 +1620,7 @@ function SettingsView({
       <header className="workspaceHeader">
         <div>
           <h1>设置</h1>
-          <p>{state.device.name} 已加入“{state.home?.name}”。加入密钥只在添加新电脑时使用。</p>
+          <p>{state.device.name} 已加入“{state.home?.name}”。房间负责密钥和信任；192/100 地址只是连接入口。</p>
         </div>
       </header>
       <div className="settingsTabs">
@@ -1639,7 +1639,7 @@ function SettingsView({
           <div className="panelHeader">
             <div>
               <h2>当前房间</h2>
-              <p>{state.home?.name || '未加入房间'} · {state.home ? roomCode(state.home.id) : 'ROOM------'}</p>
+              <p>{state.home?.name || '未加入房间'} · {state.home ? roomCode(state.home.id) : 'ROOM------'} · 同一房间可跨局域网和 Tailscale 使用</p>
             </div>
             <span className="statusPill online">{state.home?.createdByDeviceId === state.device.id ? '房主' : '成员'}</span>
           </div>
@@ -1670,7 +1670,7 @@ function SettingsView({
         </section>
         <section className="panel settingsJoin">
           <h2>添加新设备</h2>
-          <p>在新电脑打开最新版 App，选择“我已有加入密钥”，粘贴下面这串内容。新设备出现后，两台电脑都要在这里点击“信任”。</p>
+          <p>在新电脑打开最新版 App，粘贴下面这串加入密钥。房间密钥让设备进入同一信任圈；跨网时再为对方添加 Tailscale 100.x 入口。</p>
           <SetupSteps current={pendingPeers.length ? 'trust' : 'copy'} />
           <p className="secretText">{secretVisible ? state.home?.secret : '•••• •••• •••• •••• •••• ••••'}</p>
           <div className="rowActions">
@@ -1688,7 +1688,7 @@ function SettingsView({
           <div className="panelHeader">
             <div>
               <h2>跨网入口 / Tailscale</h2>
-              <p>同一台设备可以同时有局域网入口和 Tailscale 入口。跨网时为每台远端电脑添加一次 Tailscale IP，例如 100.x.x.x。</p>
+              <p>同一台设备可以同时有局域网 192.x 入口和 Tailscale 100.x 入口。房间不随网络切换；跨网时为每台远端电脑添加一次 Tailscale IP。</p>
             </div>
             <button className="secondary" onClick={() => onRefreshManualPeers()}><RefreshCw size={16} /> 刷新</button>
           </div>
@@ -1702,7 +1702,7 @@ function SettingsView({
                 <div className="manualPeerRow" key={item.address}>
                   <div>
                     <strong>{item.peerName || '未识别设备'}</strong>
-                    <span>Tailscale Web：{item.address} · {item.status}{item.lastError ? ` · ${item.lastError}` : ''}</span>
+                    <span>Tailscale入口 Web：{item.address} · {item.status}{item.lastError ? ` · ${item.lastError}` : ''}</span>
                     {item.peerId ? <span>设备 ID：{item.peerId.slice(0, 8)}</span> : null}
                   </div>
                   <button className="secondary" onClick={() => onRemoveManualPeer(item.address)}><Trash2 size={15} /> 删除</button>

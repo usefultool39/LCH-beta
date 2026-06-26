@@ -774,9 +774,9 @@ function isTailnetAddress(host = '') {
 }
 
 function routeKindLabel(kind: 'lan' | 'tailnet' | 'manual') {
-  if (kind === 'lan') return '局域网';
-  if (kind === 'tailnet') return 'Tailscale';
-  return '手动地址';
+  if (kind === 'lan') return '局域网入口';
+  if (kind === 'tailnet') return 'Tailscale入口';
+  return '手动入口';
 }
 
 function peerNetworkRoutes(peer: RuntimePeer, isOnline: boolean) {
@@ -2277,7 +2277,7 @@ function joinHome(secret: string, name = DEFAULT_HOME_NAME, expectedHomeId = '')
   const homeId = homeIdFromSecret(cleanSecret);
   const expected = String(expectedHomeId || '').trim();
   if (expected && expected !== homeId) {
-    throw new Error('房间密码和选中的局域网房间不匹配，请重新复制该房间的密码');
+    throw new Error('房间密码和选中的房间不匹配，请重新复制该房间的密码');
   }
   resetNetworkTrust();
   state.home = {

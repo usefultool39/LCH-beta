@@ -62,14 +62,14 @@ test('CLI deviceSummary separates names from connection routes', () => {
     platform: 'win32',
     isOnline: true,
     capabilities: ['commands'],
-    primaryRoute: { label: 'Tailscale', host: '100.124.26.14', controlPort: 46881, current: true, status: 'online' },
+    primaryRoute: { label: 'Tailscale入口', host: '100.124.26.14', controlPort: 46881, current: true, status: 'online' },
     networkRoutes: [
-      { label: 'Tailscale', host: '100.124.26.14', controlPort: 46881, current: true, status: 'online' },
-      { label: '局域网', host: '192.168.2.97', controlPort: 46881, status: 'online' }
+      { label: 'Tailscale入口', host: '100.124.26.14', controlPort: 46881, current: true, status: 'online' },
+      { label: '局域网入口', host: '192.168.2.97', controlPort: 46881, status: 'online' }
     ]
   });
   assert.equal(summary.display, 'Studio PC');
   assert.equal(summary.name, 'DESKTOP-SHRPNJC');
-  assert.equal(summary.current, 'Tailscale:100.124.26.14:46881:current:online');
-  assert.match(summary.routes, /局域网:192\.168\.2\.97:46881:online/);
+  assert.equal(summary.current, 'Tailscale入口:100.124.26.14:46881:current:online');
+  assert.match(summary.routes, /局域网入口:192\.168\.2\.97:46881:online/);
 });

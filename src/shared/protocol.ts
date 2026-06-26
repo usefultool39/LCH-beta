@@ -107,6 +107,22 @@ export interface ManualPeerAddress {
   peerName?: string;
 }
 
+export type PeerNetworkRouteKind = 'lan' | 'tailnet' | 'manual';
+
+export interface PeerNetworkRoute {
+  kind: PeerNetworkRouteKind;
+  label: string;
+  host: string;
+  controlPort?: number;
+  webPort?: number;
+  status?: ManualPeerStatus | DeviceUiStatus;
+  current?: boolean;
+  source: 'discovery' | 'manual';
+  lastSeenAt?: number;
+  lastCheckedAt?: number;
+  lastError?: string;
+}
+
 export interface LanRoomDevice {
   id: string;
   name: string;
@@ -185,6 +201,8 @@ export interface PeerInfo extends DeviceIdentity {
   unreadCount?: number;
   lastControlledAt?: number;
   displayName?: string;
+  primaryRoute?: PeerNetworkRoute;
+  networkRoutes?: PeerNetworkRoute[];
   latencyMs?: number;
   identityMismatch?: boolean;
 }

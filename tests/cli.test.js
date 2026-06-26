@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { attachManualPeersToDevices, manualPeerAliases, matchDevice, parseBoolean, parsePointInput, splitHotkey, takeOption } = require('../scripts/lch');
+const { attachManualPeersToDevices, deviceSummary, manualPeerAliases, matchDevice, parseBoolean, parsePointInput, splitHotkey, takeOption } = require('../scripts/lch');
 
 test('CLI splitHotkey accepts plus and comma separators', () => {
   assert.deepEqual(splitHotkey('ctrl+shift+s'), ['ctrl', 'shift', 's']);
@@ -49,4 +49,27 @@ test('CLI attachManualPeersToDevices links known peer ids only', () => {
   assert.equal(enriched.length, 1);
   assert.equal(enriched[0].manualPeers.length, 1);
   assert.equal(enriched[0].manualPeers[0].address, '100.64.1.2:46882');
+});
+
+test('CLI deviceSummary separates names from connection routes', () => {
+  const summary = deviceSummary({
+    id: 'peer-12345678',
+    name: 'DESKTOP-SHRPNJC',
+    displayName: 'Studio PC',
+    alias: 'Studio PC',
+    address: '100.124.26.14',
+    controlPort: 46881,
+    platform: 'win32',
+    isOnline: true,
+    capabilities: ['commands'],
+    primaryRoute: { label: 'Tailscale', host: '100.124.26.14', controlPort: 46881, current: true, status: 'online' },
+    networkRoutes: [
+      { label: 'Tailscale', host: '100.124.26.14', controlPort: 46881, current: true, status: 'online' },
+      { label: '局域网', host: '192.168.2.97', controlPort: 46881, status: 'online' }
+    ]
+  });
+  assert.equal(summary.display, 'Studio PC');
+  assert.equal(summary.name, 'DESKTOP-SHRPNJC');
+  assert.equal(summary.current, 'Tailscale:100.124.26.14:46881:current:online');
+  assert.match(summary.routes, /局域网:192\.168\.2\.97:46881:online/);
 });

@@ -192,6 +192,53 @@ function peerLabel(peer: PeerInfo | null) {
   return peer.displayName || peer.alias || peer.name;
 }
 
+function routeEndpoint(route?: PeerInfo['primaryRoute']) {
+  if (!route) return '';
+  const port = route.controlPort || route.webPort;
+  return `${route.host}${port ? `:${port}` : ''}`;
+}
+
+function routeStatusText(status?: string) {
+  if (!status || status === 'unknown') return '';
+  if (status === 'online') return '在线';
+  if (status === 'offline') return '离线';
+  if (status === 'home-mismatch') return '房间不匹配';
+  if (status === 'self') return '本机';
+  if (status === 'permission-needed') return '待信任';
+  if (status === 'stale') return '连接变慢';
+  return status;
+}
+
+function routeLabel(route?: PeerInfo['primaryRoute']) {
+  if (!route) return '未知路径';
+  const status = routeStatusText(route.status) ? ` · ${routeStatusText(route.status)}` : '';
+  return `${route.label || route.kind} · ${routeEndpoint(route)}${route.current ? ' · 当前' : ''}${status}`;
+}
+
+function peerSearchText(peer: PeerInfo) {
+  return [
+    peer.name,
+    peer.alias,
+    peer.displayName,
+    peer.room,
+    peer.address,
+    ...(peer.networkRoutes || []).flatMap((route) => [route.host, routeEndpoint(route), route.label])
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function routeBadges(peer: PeerInfo) {
+  return peer.networkRoutes?.length ? peer.networkRoutes : [{
+    kind: /^100\./.test(peer.address) ? 'tailnet' as const : 'lan' as const,
+    label: /^100\./.test(peer.address) ? 'Tailscale' : '局域网',
+    host: peer.address,
+    controlPort: peer.controlPort,
+    webPort: peer.webPort,
+    current: true,
+    source: 'discovery' as const,
+    status: peer.uiStatus || (peer.isOnline ? 'online' : 'offline')
+  }];
+}
+
 function peerLabelById(state: AppStateView, peerId: string) {
   if (peerId === state.device.id) return state.device.name;
   const peer = state.peers.find((item) => item.id === peerId);
@@ -382,14 +429,14 @@ function SetupScreen({
     <main className="setup">
       <section className="setupHero">
         <div className="setupBrand"><Home size={34} /> Lan Control Hub</div>
-        <h1>像加入局域网房间一样连接你的电脑</h1>
-        <p>先扫描附近已经创建的房间，选中房间后输入房间密码加入。如果附近没有房间，这台电脑就创建一个新房间，其他电脑再用密码加入。</p>
+        <h1>用同一个房间密钥连接你的电脑</h1>
+        <p>同一局域网会自动发现房间；不同网络先加入同一房间，进入设置后再添加 Tailscale IP。设备控制仍需要双方信任。</p>
       </section>
       <section className="setupPanel">
         <div className="setupPanelHeader">
           <div>
-            <h2>局域网房间</h2>
-            <p>同一房间内的设备会互相发现，加入后仍需要信任才能控制。</p>
+            <h2>加入或创建房间</h2>
+            <p>同一局域网可直接扫描加入；跨网设备用同一个房间密钥加入后，在设置里添加 Tailscale 地址。</p>
           </div>
           <button className="secondary" disabled={scanning} onClick={scanRooms}><RefreshCw size={16} /> {scanning ? '扫描中' : '扫描'}</button>
         </div>
@@ -485,8 +532,9 @@ function DeviceSidebar({
               >
                 <span className={`onlineDot ${peer.isOnline ? 'on' : ''}`} />
                 <span className="peerText">
-                  <strong>{peer.alias || deviceCode(peer.id)}{peer.unreadCount ? <em className="unreadBadge">{peer.unreadCount}</em> : null}</strong>
-                  <small>{deviceCode(peer.id)} · {peer.name} · {peer.address}</small>
+                  <strong>{peerLabel(peer)}{peer.unreadCount ? <em className="unreadBadge">{peer.unreadCount}</em> : null}</strong>
+                  <small>{peer.name} · {deviceCode(peer.id)}</small>
+                  <small className="routeLine">{routeLabel(peer.primaryRoute)}</small>
                 </span>
                 <span
                   className="checkHit starHit"
@@ -580,7 +628,8 @@ function Dashboard({
                 {selectedPeer ? statusText(selectedPeer) : '等待设备'}
               </span>
               <h2>{peerLabel(selectedPeer)}</h2>
-              <p>{selectedPeer ? `${selectedPeer.name} · ${selectedPeer.address}:${selectedPeer.controlPort} · ${selectedPeer.platform}` : '把另一台 Windows/Mac 用同一个加入密钥加入后会显示在这里。'}</p>
+              <p>{selectedPeer ? `${selectedPeer.name} · ${deviceCode(selectedPeer.id)} · ${selectedPeer.platform}` : '把另一台 Windows/Mac 用同一个加入密钥加入后会显示在这里。'}</p>
+              {selectedPeer ? <div className="routeBadges">{routeBadges(selectedPeer).map((route) => <span key={`${route.source}-${route.host}-${route.controlPort || route.webPort}`}>{routeLabel(route)}</span>)}</div> : null}
             </div>
             <div className="heroActions">
               <button className="primary heroRemote" disabled={!selectedPeer?.isOnline || !selectedPeer?.trusted || selectedPeer?.readOnly} onClick={() => selectedPeer && onOpenRemote(selectedPeer)}>
@@ -616,7 +665,8 @@ function Dashboard({
                   <span>{peer.room || '未分组'}</span>
                 </div>
                 <h3>{peerLabel(peer)}</h3>
-                <p>{peer.name} · {peer.address}:{peer.controlPort} · ID {peer.id.slice(0, 8)}</p>
+                <p>{peer.name} · {deviceCode(peer.id)}</p>
+                <div className="routeBadges compact">{routeBadges(peer).map((route) => <span key={`${route.source}-${route.host}-${route.controlPort || route.webPort}`}>{routeLabel(route)}</span>)}</div>
                 <div className="capList">
                   {capabilityLabels(peer).map((label) => <span key={label}>{label}</span>)}
                 </div>
@@ -637,7 +687,8 @@ function Dashboard({
               <>
                 <div className="deviceIdentity">
                   <strong>{peerLabel(selectedPeer)}</strong>
-                  <span>{selectedPeer.address}:{selectedPeer.controlPort}</span>
+                  <span>{selectedPeer.name} · {deviceCode(selectedPeer.id)}</span>
+                  <span>{routeLabel(selectedPeer.primaryRoute)}</span>
                 </div>
                 <label className="compactField">
                   <span>别名</span>
@@ -1636,8 +1687,8 @@ function SettingsView({
         <section className="panel settingsExternal">
           <div className="panelHeader">
             <div>
-              <h2>外网 / Tailscale 连接</h2>
-              <p>先让两台电脑加入同一个 Tailscale、ZeroTier 或 WireGuard 网络，并使用同一个加入密钥。这里填对方虚拟 IP，例如 100.x.x.x。</p>
+              <h2>跨网入口 / Tailscale</h2>
+              <p>同一台设备可以同时有局域网入口和 Tailscale 入口。跨网时为每台远端电脑添加一次 Tailscale IP，例如 100.x.x.x。</p>
             </div>
             <button className="secondary" onClick={() => onRefreshManualPeers()}><RefreshCw size={16} /> 刷新</button>
           </div>
@@ -1650,8 +1701,9 @@ function SettingsView({
               {state.manualPeerAddresses.map((item) => (
                 <div className="manualPeerRow" key={item.address}>
                   <div>
-                    <strong>{item.peerName || item.address}</strong>
-                    <span>{item.address} · {item.status}{item.lastError ? ` · ${item.lastError}` : ''}</span>
+                    <strong>{item.peerName || '未识别设备'}</strong>
+                    <span>Tailscale Web：{item.address} · {item.status}{item.lastError ? ` · ${item.lastError}` : ''}</span>
+                    {item.peerId ? <span>设备 ID：{item.peerId.slice(0, 8)}</span> : null}
                   </div>
                   <button className="secondary" onClick={() => onRemoveManualPeer(item.address)}><Trash2 size={15} /> 删除</button>
                 </div>

@@ -191,18 +191,28 @@ function deviceAliasList(device) {
   ].filter(Boolean);
 }
 
+function routeSummary(route) {
+  if (!route) return '';
+  const port = route.controlPort || route.webPort;
+  const endpoint = `${route.host}${port ? `:${port}` : ''}`;
+  return `${route.label || route.kind}:${endpoint}${route.current ? ':current' : ''}${route.status ? `:${route.status}` : ''}`;
+}
+
 function deviceSummary(device) {
+  const routes = Array.isArray(device.networkRoutes) ? device.networkRoutes.map(routeSummary).filter(Boolean) : [];
   return {
     id: device.id,
-    alias: deviceAliasList(device).slice(1).join(','),
+    code: device.id.slice(0, 8),
     name: device.name,
     display: device.displayName || device.alias || device.name,
+    alias: device.alias || '',
     room: device.room || '',
     favorite: Boolean(device.favorite),
     status: device.uiStatus || (device.isOnline ? 'online' : 'offline'),
     platform: device.platform,
     online: device.isOnline,
-    address: `${device.address}:${device.controlPort}`,
+    current: routeSummary(device.primaryRoute) || `${device.address}:${device.controlPort}`,
+    routes: routes.join(','),
     capabilities: (device.capabilities || []).join(',')
   };
 }
@@ -957,6 +967,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  deviceSummary,
   attachManualPeersToDevices,
   manualPeerAliases,
   matchDevice,

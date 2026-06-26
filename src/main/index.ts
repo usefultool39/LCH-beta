@@ -769,6 +769,59 @@ function isPeerTrusted(peer: Pick<PeerInfo, 'id' | 'publicKey' | 'publicKeyHash'
   return isDeviceTrusted(state.trustedDevices, state.blockedDevices, peer);
 }
 
+function isTailnetAddress(host = '') {
+  return /^100\./.test(host) || /^fd7a:115c:a1e0:/i.test(host);
+}
+
+function routeKindLabel(kind: 'lan' | 'tailnet' | 'manual') {
+  if (kind === 'lan') return '局域网';
+  if (kind === 'tailnet') return 'Tailscale';
+  return '手动地址';
+}
+
+function peerNetworkRoutes(peer: RuntimePeer, isOnline: boolean) {
+  const routes: NonNullable<PeerInfo['networkRoutes']> = [];
+  const seen = new Set<string>();
+  function addRoute(route: NonNullable<PeerInfo['networkRoutes']>[number]) {
+    const key = `${route.host}:${route.controlPort || route.webPort || ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    routes.push(route);
+  }
+  const currentKind = isTailnetAddress(peer.address) ? 'tailnet' : 'lan';
+  addRoute({
+    kind: currentKind,
+    label: routeKindLabel(currentKind),
+    host: peer.address,
+    controlPort: peer.controlPort,
+    webPort: peer.webPort,
+    status: isOnline ? 'online' : 'offline',
+    current: true,
+    source: 'discovery',
+    lastSeenAt: peer.lastSeen
+  });
+  for (const manualPeer of state.manualPeerAddresses) {
+    if (manualPeer.peerId !== peer.id) continue;
+    const kind = isTailnetAddress(manualPeer.host) ? 'tailnet' : 'manual';
+    addRoute({
+      kind,
+      label: routeKindLabel(kind),
+      host: manualPeer.host,
+      controlPort: peer.controlPort,
+      webPort: manualPeer.port,
+      status: manualPeer.status,
+      current: manualPeer.host === peer.address,
+      source: 'manual',
+      lastSeenAt: manualPeer.lastSeenAt,
+      lastCheckedAt: manualPeer.lastCheckedAt,
+      lastError: manualPeer.lastError
+    });
+  }
+  return routes.sort((a, b) => Number(b.current) - Number(a.current)
+    || Number(b.status === 'online') - Number(a.status === 'online')
+    || a.label.localeCompare(b.label));
+}
+
 function serializePeers() {
   const now = Date.now();
   return [...peers.values()]
@@ -777,13 +830,15 @@ function serializePeers() {
       const age = now - peer.lastSeen;
       const isOnline = age < PEER_TIMEOUT_MS;
       const trusted = isPeerTrusted(peer);
+      const uiStatus = !trusted
+        ? 'permission-needed' as const
+        : isOnline ? (age > PEER_TIMEOUT_MS * 0.65 ? 'stale' as const : 'online' as const) : 'offline' as const;
+      const networkRoutes = peerNetworkRoutes(peer, isOnline);
       return {
         ...peer,
         trusted,
         isOnline,
-        uiStatus: !trusted
-          ? 'permission-needed' as const
-          : isOnline ? (age > PEER_TIMEOUT_MS * 0.65 ? 'stale' as const : 'online' as const) : 'offline' as const,
+        uiStatus,
         alias: preference.alias,
         room: preference.room,
         favorite: Boolean(preference.favorite),
@@ -791,7 +846,9 @@ function serializePeers() {
         notificationsMuted: Boolean(preference.notificationsMuted),
         unreadCount: Number(preference.unreadCount || 0),
         lastControlledAt: preference.lastControlledAt,
-        displayName: preference.alias || peer.name
+        displayName: preference.alias || peer.name,
+        primaryRoute: networkRoutes[0],
+        networkRoutes
       };
     })
     .sort((a, b) => Number(b.favorite) - Number(a.favorite)

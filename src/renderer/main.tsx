@@ -2034,8 +2034,8 @@ function SettingsView({
               <section className="advancedBox">
                 <div className="advancedBoxHeader">
                   <div>
-                    <h3>按延迟自动选路（v0.19 实验）</h3>
-                    <p>开启后，控制消息会按延迟顺序尝试 Tailscale / LAN / 手动 peer 的所有路由，失败自动回退下一条。关闭时维持 v0.18 行为（直连第一地址）。</p>
+                    <h3>按延迟自动选路（v0.19+ 默认开启）</h3>
+                    <p>开启后，控制消息会按延迟顺序尝试 Tailscale / LAN / 手动 peer 的所有路由，失败自动回退下一条。v0.19 默认开启；如果发现控制异常，关闭即可回到 v0.18 行为（直连第一地址）。</p>
                   </div>
                   <span className={`statusPill ${state.preferLowLatencyRoutes ? 'online' : 'offline'}`}>
                     {state.preferLowLatencyRoutes ? '已开启' : '已关闭'}

@@ -349,7 +349,9 @@ export function migrateState(raw: unknown, defaults: PersistedAppState, options:
     fullDiskAccessEnabled: Boolean(parsed.fullDiskAccessEnabled),
     autoTrustDevices: Boolean(parsed.autoTrustDevices),
     agentGatewayEnabled: Boolean(parsed.agentGatewayEnabled),
-    preferLowLatencyRoutes: Boolean(parsed.preferLowLatencyRoutes),
+    preferLowLatencyRoutes: parsed.preferLowLatencyRoutes === undefined
+      ? true
+      : Boolean(parsed.preferLowLatencyRoutes),
     localApiToken: parsed.localApiToken ? String(parsed.localApiToken) : defaults.localApiToken,
     manualPeerAddresses: manualPeerNormalizer(Array.isArray(parsed.manualPeerAddresses) ? parsed.manualPeerAddresses : []),
     transfers: normalizeTransferRecords(Array.isArray(parsed.transfers) ? parsed.transfers : []),

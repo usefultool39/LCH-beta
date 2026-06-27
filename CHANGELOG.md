@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.19.0
+
+- Phase D goes default-on. `preferLowLatencyRoutes` now defaults to
+  `true` for both fresh installs and existing users migrating from
+  v0.18.x (legacy states with the field unset get migrated to true
+  too). Control messages will walk the sorted `networkRoutes` list,
+  try each entry, and fall back to `peer.address` on exhaustion,
+  without any user opt-in.
+- UI: Settings -> System -> Advanced label updated from
+  "v0.19 实验" to "v0.19+ 默认开启" to reflect the new default. The
+  toggle still works the same way (off reverts to v0.18 behaviour of
+  single-address connection) so users who hit regressions can
+  recover immediately.
+
 ## v0.18.0
 
 - Fix: `refreshManualPeers` no longer crashes when the manual peer list is

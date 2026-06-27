@@ -13,7 +13,7 @@ declare global {
       repairFirewall: (elevated?: boolean) => Promise<FirewallStatus>;
       checkUpdates: () => Promise<{ currentVersion: string; latestVersion: string; tag: string; updateAvailable: boolean; url: string; publishedAt?: string; assets: Array<{ name: string; size: number; url: string }> }>;
       openLatestRelease: () => Promise<void>;
-      createHome: (name: string, stealth?: boolean) => Promise<AppStateView>;
+      createHome: (name: string, password: string, stealth?: boolean) => Promise<AppStateView>;
       joinHome: (secret: string, name: string, expectedHomeId?: string) => Promise<AppStateView>;
       leaveHome: () => Promise<AppStateView>;
       scanRooms: () => Promise<{ rooms: LanRoomInfo[]; scanned: { lan?: number; tailnet?: number; tailnetSource?: 'cli' | 'fallback' } }>;

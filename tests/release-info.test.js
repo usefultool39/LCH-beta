@@ -9,7 +9,7 @@ const {
 } = require('../scripts/release-info');
 
 test('release metadata is internally consistent', () => {
-  assert.equal(validateVersions(), '0.19.1');
+  assert.equal(validateVersions(), '0.20.0');
   assert.equal(validateReadme(), true);
 });
 

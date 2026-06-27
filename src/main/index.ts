@@ -153,6 +153,8 @@ type SharedUploadToken = SharedFileToken & {
 };
 
 const DEFAULT_HOME_NAME = '我的局域网';
+const MIN_ROOM_PASSWORD_LENGTH = 4;
+const TAILNET_DISCOVERY_INTERVAL_MS = 30_000;
 const DOWNLOAD_FOLDER_NAME = 'LanControlHub';
 const HEADLESS = process.argv.includes('--headless') || process.env.LCH_HEADLESS === '1';
 const START_HIDDEN = process.argv.includes('--hidden') || process.env.LCH_START_HIDDEN === '1';
@@ -163,6 +165,8 @@ let mainWindow: BrowserWindow | null = null;
 let state: AppState;
 let discoverySocket: dgram.Socket | null = null;
 let discoveryTimer: NodeJS.Timeout | null = null;
+let tailnetDiscoveryTimer: NodeJS.Timeout | null = null;
+let tailnetDiscoveryRunning = false;
 let pruneTimer: NodeJS.Timeout | null = null;
 
 // In-memory only; not persisted. Bumped on every createHome / joinHome so
@@ -455,6 +459,16 @@ function homeIdFromSecret(secret: string) {
 
 function deriveHomeKey(secret: string) {
   return crypto.createHash('sha256').update(`lch-aes:${secret.trim()}`).digest();
+}
+
+function cleanRoomPassword(input: unknown, allowGenerated = false) {
+  const clean = String(input || '').trim();
+  if (clean) {
+    if (clean.length < MIN_ROOM_PASSWORD_LENGTH) throw new Error(`房间密码至少需要 ${MIN_ROOM_PASSWORD_LENGTH} 个字符`);
+    return clean;
+  }
+  if (allowGenerated) return base64url(crypto.randomBytes(32));
+  throw new Error('请先设置房间密码');
 }
 
 function createDeviceIdentity() {
@@ -803,7 +817,13 @@ function rememberLanRoom(packet: DiscoveryPacket, address: string, source: LanRo
     controlPort: packet.controlPort,
     webPort: packet.webPort,
     appVersion: packet.appVersion,
+    platform: packet.device.platform,
+    publicKey: packet.device.publicKey,
     publicKeyHash: packet.device.publicKeyHash,
+    capabilities: packet.capabilities,
+    protocolVersion: packet.protocolVersion,
+    minSupportedProtocolVersion: packet.minSupportedProtocolVersion,
+    capabilityVersions: packet.capabilityVersions,
     lastSeenAt: now
   };
   const devices = [
@@ -825,6 +845,36 @@ function rememberLanRoom(packet: DiscoveryPacket, address: string, source: LanRo
     stealth: Boolean(packet.homeStealth)
   });
   return true;
+}
+
+function adoptNearbyRoomPeers(homeId: string) {
+  const room = nearbyRooms.get(homeId);
+  if (!room || !state.home || state.home.id !== homeId) return;
+  for (const device of room.devices) {
+    if (!device.publicKey) continue;
+    rememberPeer({
+      kind: 'lch-discovery',
+      version: 1,
+      protocolVersion: device.protocolVersion,
+      minSupportedProtocolVersion: device.minSupportedProtocolVersion,
+      homeId,
+      homeName: room.homeName,
+      appVersion: device.appVersion || '',
+      device: {
+        id: device.id,
+        name: device.name,
+        platform: device.platform || 'unknown',
+        publicKey: device.publicKey,
+        publicKeyHash: device.publicKeyHash || publicKeyHash(device.publicKey)
+      },
+      controlPort: device.controlPort,
+      webPort: device.webPort,
+      capabilities: device.capabilities || [],
+      capabilityVersions: device.capabilityVersions,
+      timestamp: Date.now(),
+      homeStealth: room.stealth
+    }, device.address);
+  }
 }
 
 function serializeNearbyRooms() {
@@ -995,12 +1045,12 @@ async function scanRooms(): Promise<{ rooms: ReturnType<typeof serializeNearbyRo
     const result = await scanTailnetRooms();
     scanned.tailnet = result.scanned;
     scanned.tailnetSource = result.source;
-  }
-  if (kind === 'lan' || kind === 'both') {
+  } else if (kind === 'lan') {
     const lanHosts = localScanHosts();
     await runLimited(lanHosts, 64, probeLanRoom);
     scanned.lan = lanHosts.length;
   }
+  if (state.home) adoptNearbyRoomPeers(state.home.id);
   emitState();
   return { rooms: serializeNearbyRooms(), scanned };
 }
@@ -2503,21 +2553,24 @@ function ensureHome() {
   return state.home;
 }
 
-function createHome(name = DEFAULT_HOME_NAME, stealth = false) {
-  const secret = base64url(crypto.randomBytes(32));
+function createHome(name = DEFAULT_HOME_NAME, passwordOrStealth: string | boolean = '', stealth = false) {
+  const legacyStealth = typeof passwordOrStealth === 'boolean';
+  const secret = cleanRoomPassword(legacyStealth ? '' : passwordOrStealth, legacyStealth);
   resetNetworkTrust();
+  state.autoTrustDevices = true;
   state.home = {
     id: homeIdFromSecret(secret),
     name: String(name || DEFAULT_HOME_NAME).trim().slice(0, 40) || DEFAULT_HOME_NAME,
     secret,
     createdAt: Date.now(),
     createdByDeviceId: state.device.id,
-    stealth: Boolean(stealth)
+    stealth: legacyStealth ? passwordOrStealth : Boolean(stealth)
   };
   trustSelf();
   postJoinTrustPromptedAt = Date.now();
   saveState();
   broadcastPresence();
+  scheduleTailnetDiscoverySoon();
   emitState();
   return appStateView();
 }
@@ -2532,14 +2585,14 @@ function leaveHome() {
 }
 
 function joinHome(secret: string, name = DEFAULT_HOME_NAME, expectedHomeId = '') {
-  const cleanSecret = String(secret || '').trim();
-  if (cleanSecret.length < 16) throw new Error('家庭密钥太短或无效');
+  const cleanSecret = cleanRoomPassword(secret);
   const homeId = homeIdFromSecret(cleanSecret);
   const expected = String(expectedHomeId || '').trim();
   if (expected && expected !== homeId) {
-    throw new Error('房间密码和选中的房间不匹配，请重新复制该房间的密码');
+    throw new Error('房间密码和选中的房间不匹配，请重新输入密码');
   }
   resetNetworkTrust();
+  state.autoTrustDevices = true;
   state.home = {
     id: homeId,
     name: String(name || DEFAULT_HOME_NAME).trim().slice(0, 40) || DEFAULT_HOME_NAME,
@@ -2549,8 +2602,10 @@ function joinHome(secret: string, name = DEFAULT_HOME_NAME, expectedHomeId = '')
   trustSelf();
   postJoinTrustPromptedAt = Date.now();
   peers.clear();
+  adoptNearbyRoomPeers(homeId);
   saveState();
   broadcastPresence();
+  scheduleTailnetDiscoverySoon();
   emitState();
   return appStateView();
 }
@@ -2853,6 +2908,18 @@ function removeManualPeer(address: string) {
   return appStateView();
 }
 
+function scheduleTailnetDiscoverySoon() {
+  if (HEADLESS || tailnetDiscoveryRunning) return;
+  const kind = networkInfo().activeNetwork;
+  if (kind !== 'tailnet' && kind !== 'both') return;
+  tailnetDiscoveryRunning = true;
+  setTimeout(() => {
+    scanRooms()
+      .catch((error) => logRuntimeError('tailnet-discovery', error))
+      .finally(() => { tailnetDiscoveryRunning = false; });
+  }, 500);
+}
+
 function startDiscovery() {
   discoverySocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
   discoverySocket.on('message', (message, remote) => {
@@ -2873,6 +2940,8 @@ function startDiscovery() {
     discoverySocket?.setBroadcast(true);
     broadcastPresence();
     discoveryTimer = setInterval(broadcastPresence, DISCOVERY_INTERVAL_MS);
+    tailnetDiscoveryTimer = setInterval(scheduleTailnetDiscoverySoon, TAILNET_DISCOVERY_INTERVAL_MS);
+    scheduleTailnetDiscoverySoon();
   });
   pruneTimer = setInterval(() => {
     const now = Date.now();
@@ -4693,7 +4762,7 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown) {
 }
 
 async function handleLocalApi(pathname: string, method: string, body: any) {
-  if (method === 'POST' && pathname === '/api/setup/create') return createHome(body.name, body.stealth === true);
+  if (method === 'POST' && pathname === '/api/setup/create') return createHome(body.name, body.password || body.secret || '', body.stealth === true);
   if (method === 'POST' && pathname === '/api/setup/join') return joinHome(body.secret, body.name, body.expectedHomeId);
   if (method === 'POST' && pathname === '/api/setup/leave') return leaveHome();
   if (method === 'GET' && pathname === '/api/rooms') return serializeNearbyRooms();
@@ -5048,7 +5117,7 @@ function registerIpc() {
   ipcMain.handle('lch:repair-firewall', (_event, elevated) => repairFirewallRules(elevated !== false));
   ipcMain.handle('lch:check-updates', () => checkForUpdates());
   ipcMain.handle('lch:open-latest-release', () => shell.openExternal(RELEASES_URL));
-ipcMain.handle('lch:create-home', (_event, name, stealth) => createHome(name, Boolean(stealth)));
+ipcMain.handle('lch:create-home', (_event, name, password, stealth) => createHome(name, password, Boolean(stealth)));
   ipcMain.handle('lch:join-home', (_event, secret, name, expectedHomeId) => joinHome(secret, name, expectedHomeId));
   ipcMain.handle('lch:leave-home', () => leaveHome());
   ipcMain.handle('lch:scan-rooms', () => scanRooms());
@@ -5222,6 +5291,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     if (discoveryTimer) clearInterval(discoveryTimer);
+    if (tailnetDiscoveryTimer) clearInterval(tailnetDiscoveryTimer);
     if (pruneTimer) clearInterval(pruneTimer);
     for (const task of runningTasks.values()) task.child.kill();
     for (const session of terminalSessions.values()) {

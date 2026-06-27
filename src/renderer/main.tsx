@@ -405,18 +405,18 @@ function SetupScreen({
 }: {
   rooms: LanRoomInfo[];
   networkInfo: NetworkInfo;
-  onCreate: (name: string, stealth?: boolean) => void;
+  onCreate: (name: string, password: string, stealth?: boolean) => void;
   onJoin: (secret: string, name: string, expectedHomeId?: string) => void;
   onScanRooms: () => Promise<unknown> | void;
 }) {
   const networkBadge = (() => {
     const kind = networkInfo.activeNetwork;
-    if (kind === 'tailnet') return { label: '当前网络：Tailscale', cls: 'net tailnet', hint: '将只扫描 Tailscale (100.x) 上的房间' };
-    if (kind === 'lan') return { label: '当前网络：局域网', cls: 'net lan', hint: '将只扫描局域网 (192.168/10.x) 上的房间' };
-    if (kind === 'both') return { label: '当前网络：Tailscale + 局域网', cls: 'net both', hint: '可扫描 Tailscale 和局域网上的房间' };
+    if (kind === 'tailnet' || kind === 'both') return { label: 'Tailscale 内', cls: 'net tailnet', hint: '已检测到 Tailscale，将只扫描 Tailscale 内的房间' };
+    if (kind === 'lan') return { label: '当前网络：局域网', cls: 'net lan', hint: '将扫描同一局域网内的房间' };
     return { label: '当前网络：未连接', cls: 'net none', hint: '请连接 Wi-Fi 或启用 Tailscale' };
   })();
 const [name, setName] = useState('我的 LCH 房间');
+  const [createPassword, setCreatePassword] = useState('');
   const [stealth, setStealth] = useState(false);
   const [secret, setSecret] = useState('');
   const [selectedRoomId, setSelectedRoomId] = useState('');
@@ -439,6 +439,9 @@ const [name, setName] = useState('我的 LCH 房间');
   }
   function joinSelectedRoom() {
     onJoin(secret, selectedRoom?.homeName || selectedRoom?.displayName || name, selectedRoom?.homeId);
+  }
+  function createRoom() {
+    onCreate(name, createPassword, stealth);
   }
 return (
     <main className="setup">
@@ -479,6 +482,7 @@ return (
                 <span className="roomScanTitle">
                   {room.displayName}
                   {room.stealth ? <span className="roomBadge stealth" title="隐身房间：不广播 UDP，需要手动输入密钥">隐身</span> : null}
+                  <span className="joinBadge">加入</span>
                 </span>
                 <span>{roomCode(room.homeId)} · {room.deviceCount} 台设备 · {entryKind} {room.hostAddress}:{room.webPort} · {scanKindLabel}</span>
               </button>
@@ -499,7 +503,11 @@ return (
           <label>创建一个新房间</label>
           <input value={name} onChange={(event) => setName(event.target.value)} />
         </div>
-<button className="primary wide" onClick={() => onCreate(name, stealth)}>
+        <div className="field">
+          <label>设置房间密码</label>
+          <input type="password" value={createPassword} onChange={(event) => setCreatePassword(event.target.value)} placeholder="其他设备输入这个密码即可加入并自动互信" />
+        </div>
+<button className="primary wide" disabled={!createPassword.trim()} onClick={createRoom}>
           <Home size={16} /> 创建新房间
         </button>
         <label className="stealthToggle">
@@ -2863,7 +2871,7 @@ useEffect(() => {
 <SetupScreen
         rooms={state.nearbyRooms || []}
         networkInfo={state.networkInfo}
-        onCreate={(name, stealth) => run(() => api.createHome(name, stealth))}
+        onCreate={(name, password, stealth) => run(() => api.createHome(name, password, stealth))}
         onJoin={(secret, name, expectedHomeId) => run(() => api.joinHome(secret, name, expectedHomeId))}
         onScanRooms={() => run(() => api.scanRooms())}
       />

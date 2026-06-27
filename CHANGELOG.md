@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.20.0
+
+- Feat: room creation now accepts a user-set room password instead of forcing a generated secret from the setup flow. Other devices can scan the room and join with that password.
+- Feat: password-created/joined rooms enable automatic mutual trust for devices that prove they know the same room password, so room members can control each other without a separate trust wizard step.
+- Feat: when Tailscale is detected, setup and background discovery prefer Tailscale-only room scanning, show the setup state as `Tailscale 内`, and periodically refresh tailnet rooms so newly joined devices become visible.
+
 ## v0.19.1
 
 - Fix: Windows/macOS auto-launch now registers the packaged executable path and honors the `--hidden` startup argument, so enabling Settings -> System -> open at login starts Lan Control Hub in the background instead of popping the main window.

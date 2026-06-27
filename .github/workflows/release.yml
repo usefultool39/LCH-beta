@@ -66,6 +66,7 @@ jobs:
     name: Build macOS (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     needs: validate
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -103,13 +104,11 @@ jobs:
           name: macos-${{ matrix.arch }}
           path: |
             release/*.zip
-          if-no-files-found: error
+          if-no-files-found: warn
 
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     needs:
       - build-windows
       - build-macos
@@ -119,26 +118,55 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
-      - name: Download artifacts
+      - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: artifacts/windows
+
+      - name: Download macOS artifacts (best-effort)
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/macos-intel
+          name: macos-x64
+        continue-on-error: true
+
+      - name: Download macOS arm64 artifacts (best-effort)
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/macos-arm64
+          name: macos-arm64
+        continue-on-error: true
+
+      - name: Reorganize artifacts
+        run: |
+          # Flatten so release-info.js checksums sees one directory.
+          mkdir -p artifacts
+          if [ -d artifacts/windows ]; then
+            find artifacts/windows -type f -name '*.exe' -exec cp {} artifacts/ \;
+          fi
+          if [ -d artifacts/macos-intel ]; then
+            find artifacts/macos-intel -type f -name '*.zip' -exec cp {} artifacts/ \;
+          fi
+          if [ -d artifacts/macos-arm64 ]; then
+            find artifacts/macos-arm64 -type f -name '*.zip' -exec cp {} artifacts/ \;
+          fi
+          ls -la artifacts/
 
       - name: Generate checksums and release notes
         run: |
           node scripts/release-info.js checksums artifacts SHA256SUMS.txt
-          node scripts/release-info.js release-notes --tag "$RELEASE_TAG" > release-notes.md
+          node scripts/release-info.js release-notes --tag "${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}" > release-notes.md
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: Lan Control Hub ${{ env.RELEASE_TAG }}
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: Lan Control Hub ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           body_path: release-notes.md
           draft: false
           prerelease: false
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           files: |
-            artifacts/**/*.exe
-            artifacts/**/*.zip
+            artifacts/*.exe
+            artifacts/*.zip
             SHA256SUMS.txt

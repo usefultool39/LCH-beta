@@ -6,7 +6,7 @@
 
 ## 一句话目标
 
-让 LCH 客户端能**自动识别当前网络（Tailscale 或局域网）**，登录界面只扫对应网络上的房间；房主可隐身；加入后主动选择信任。
+让 LCH 客户端能**自动识别当前网络（Tailscale 或局域网）**，登录界面只扫对应网络上的房间；房主可隐身；加入后主动选择信任；控制消息按延迟自动选路。
 
 详细设计文档：[docs/room-discovery-redesign.md](room-discovery-redesign.md)
 
@@ -17,7 +17,12 @@
 | A | 网络感知 + 开机自动启动 | ✅ 已落地 | `3b298b5` |
 | B | Tailscale 子网扫描 + 房主隐身 + 智能扫描入口 | ✅ 已落地 | `6819643` |
 | C | 加入后信任向导 + 跨网路由优先（排序/延迟） | ✅ 已落地 | `83278e2` |
-| D | 跨网路由优先 — 真实控制消息按延迟选路（feature flag） | ✅ 已落地 | `9913ee6` (含 Issue 2 修复) |
+| D | 跨网路由优先 — 真实控制消息按延迟选路（feature flag） | ✅ 已落地 | `ff211cb` (v0.19.0 release, flip default-on) |
+| E | macOS build + GitHub Actions release | ⏳ 路线图 | — |
+
+**里程碑 release 头**：
+- `v0.18.0` @ `9913ee6`：Phase A-D + Issue 2 修复（auto-route 默认 off）
+- `v0.19.0` @ `ff211cb`：同上，auto-route 默认 on
 
 每次完成一块，**就地更新这张表**，并 commit 进 git。
 
@@ -168,7 +173,62 @@
 
 ---
 
-## 不要做的事
+## Phase E：v0.20.0 路线图（build / release 工程化）
+
+Active Goal 的核心功能都已落地。下一阶段侧重 release / 跨平台工程化：
+
+### E.1 GitHub Actions release workflow [P0]
+
+**目标**：push tag 自动 build Windows + macOS + 生成 SHA256SUMS，自动 `gh release create`。
+
+**实现路径**：
+1. `.github/workflows/release.yml`：
+   - trigger: `push: tags: ['v*']`
+   - matrix: `[windows-latest, macos-latest]`
+   - steps: checkout → setup Node 20 → npm ci → npm run package:win / package:mac → upload artifacts
+   - 最后一步用 `gh release create ${{ github.ref_name }} ./release/*.exe ./release/*.zip ./release/SHA256SUMS.txt --notes-file docs/release-notes-v0.18.0-v0.19.0.md --repo ${{ github.repository }}`
+2. macOS arm64 + x64 各出 zip
+3. 失败时不要 publish partial release
+4. 自动给 release attach `SHA256SUMS.txt` 和 `latest.yml`
+
+**预计工作量**：半天到一天
+
+### E.2 macOS 端到端验证 [P0]
+
+**目标**：在 macOS runner 上验证 `npm run package:mac` 出来的 zip 能正常启动 + 房间扫描 + 信任向导 + 路由排序 + auto-launch + lch CLI（如果能给 macOS 加 lch 路径）。
+
+**实现路径**：
+- 借 macOS runner 跑一遍 dev / build / package / smoke test
+- 修任何 macOS-specific bug（menu bar、keychain 权限、launchd 路径等）
+
+**预计工作量**：1-2 天（取决于遇到多少 macOS bug）
+
+### E.3 Issue 2 macOS / Linux 路径 [P1]
+
+**目标**：把 lch CLI App Paths 注册扩展到 macOS / Linux。
+
+**实现路径**：
+- macOS：在 `~/Library/Application Support/Lan Control Hub/lch` 创建 shim 脚本 + 加到 `~/.zshrc` / `~/.bash_profile`
+- Linux：写 `~/.local/bin/lch` symlink + 检查 PATH
+- 三平台统一通过 `getLchOnPath()` / `setLchOnPath()` 抽象
+
+**预计工作量**：1 天
+
+### E.4 完整集成测试 + 远程 E2E [P1]
+
+**目标**：用 Playwright 或自写脚本端到端跑两台 mock LCH 实例（headless），验证：
+- Phase B 隐身房间创建 + 跨网扫描找不到 + 手动加密钥能加入
+- Phase C 信任向导弹窗流程
+- Phase D auto-route fail-over（mock 一条 route 失败）
+- Issue 2 lch CLI 在新 shell 能跑
+
+**预计工作量**：3-5 天
+
+### E 综合工作量
+
+~7-10 天，分批 release v0.20.0 / v0.21.0 / v0.22.0。
+
+---
 
 - ❌ 不要 `--force` push 任何分支
 - ❌ 不要直接 commit `qc` 这类未跟踪临时文件（用 `git add <specific paths>`）

@@ -3,6 +3,11 @@
 本文档收录已确认但还没在 GitHub 上开 issue 的 bug 报告和功能请求。
 每个条目都可以直接复制粘贴到 GitHub Issues 页提交。
 
+> **当前状态**：本文档里的 Issue 1 / Issue 2 都已在 v0.18.0 之前修复，
+> 详见 `docs/已知限制.md` 顶部的 "Fixed in ..." 标记。如果你想在
+> GitHub 上留 traceback，可以把这两条当 history issue 开 — 否则建议
+> 直接删掉这两个草稿。
+
 ---
 
 ## Issue 1: alias / displayName 字段在 API 输出层被截断

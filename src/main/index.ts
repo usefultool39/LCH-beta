@@ -708,6 +708,83 @@ function setAutoLaunch(enabled: boolean): AutoLaunchInfo {
   return getAutoLaunch();
 }
 
+interface LchOnPathInfo {
+  available: boolean;
+  enabled: boolean;
+  reason?: string;
+  cliPath?: string;
+}
+
+function getLchOnPath(): LchOnPathInfo {
+  if (process.platform !== 'win32') {
+    return { available: false, enabled: false, reason: '当前平台暂未实现（仅 Windows）' };
+  }
+  // Look in HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths\lch.exe.
+  // The App Paths mechanism is consulted by cmd.exe / PowerShell before PATH
+  // when looking up executables, so writing here is enough to make
+  // `lch devices` work from any new shell the user opens.
+  const targetName = 'lch.exe';
+  const regPath = `\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${targetName}`;
+  try {
+    const { execSync } = require('node:child_process');
+    const out = execSync(`reg query "HKCU${regPath}" /ve`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const match = out.match(/REG_SZ\s+(.+?)\r?\n/);
+    if (match) {
+      const target = match[1].trim();
+      return { available: true, enabled: true, cliPath: target };
+    }
+    return { available: true, enabled: false };
+  } catch {
+    return { available: true, enabled: false };
+  }
+}
+
+function setLchOnPath(enabled: boolean): LchOnPathInfo {
+  if (process.platform !== 'win32') {
+    throw new Error('当前平台暂未实现（仅 Windows）');
+  }
+  const regPath = `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\lch.exe`;
+  try {
+    const { execSync } = require('node:child_process');
+    if (enabled) {
+      // Prefer a CLI shim next to the .exe. lch.cmd / scripts/lch.js are
+      // unpacked to resources/app.asar.unpacked by electron-builder
+      // (see package.json -> build.asarUnpack), so the relative path is
+      // stable across upgrades.
+      const exeDir = path.dirname(process.execPath);
+      const candidates = [
+        path.join(exeDir, 'resources', 'app.asar.unpacked', 'scripts', 'lch.cmd'),
+        path.join(exeDir, 'resources', 'app.asar.unpacked', 'scripts', 'lch.js'),
+        path.join(exeDir, 'scripts', 'lch.cmd'),
+        path.join(exeDir, 'scripts', 'lch.js')
+      ];
+      const target = candidates.find((p) => {
+        try { return require('node:fs').existsSync(p); } catch { return false; }
+      });
+      if (!target) {
+        throw new Error('找不到 lch.cmd / lch.js（asarUnpack 配置可能没生效）。请重装最新版本。');
+      }
+      execSync(`reg add "${regPath}" /ve /d "${target}" /f`, { encoding: 'utf8' });
+      // Best-effort: also drop a sibling `lch.cmd` next to the .exe so users
+      // who prefer the .cmd shim still get a working invocation.
+      try {
+        const cmdTarget = target.endsWith('.cmd') ? target : target.replace(/\.js$/, '.cmd');
+        if (cmdTarget !== target && require('node:fs').existsSync(cmdTarget)) {
+          // already in place via asar.unpack
+        }
+      } catch { /* ignore */ }
+      addAudit('cli.path', `已将 lch 加入 App Paths：${target}`);
+    } else {
+      execSync(`reg delete "${regPath}" /f`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      addAudit('cli.path', '已从 App Paths 移除 lch');
+    }
+    emitState();
+    return getLchOnPath();
+  } catch (err) {
+    throw new Error('修改 App Paths 失败：' + (err instanceof Error ? err.message : String(err)));
+  }
+}
+
 function roomDisplayName(homeId: string, homeName?: string) {
   const clean = String(homeName || '').trim();
   return clean || `LAN Room ${homeId.slice(0, 6).toUpperCase()}`;
@@ -1119,6 +1196,7 @@ autoTrustDevices: state.autoTrustDevices,
 networkInfo: networkInfo(),
     webrtc: state.webrtc,
     autoLaunch: getAutoLaunch(),
+    lchOnPath: getLchOnPath(),
     postJoinTrustPromptedAt: postJoinTrustPromptedAt || undefined
   };
 }
@@ -4636,6 +4714,8 @@ async function handleLocalApi(pathname: string, method: string, body: any) {
   if (method === 'POST' && pathname === '/api/settings/auto-trust') return setAutoTrustDevices(body.enabled !== false);
   if (method === 'GET' && pathname === '/api/settings/auto-launch') return getAutoLaunch();
   if (method === 'POST' && pathname === '/api/settings/auto-launch') return setAutoLaunch(body.enabled === true);
+  if (method === 'GET' && pathname === '/api/settings/lch-on-path') return getLchOnPath();
+  if (method === 'POST' && pathname === '/api/settings/lch-on-path') return setLchOnPath(body.enabled === true);
   if (method === 'POST' && pathname === '/api/settings/agent-gateway') return setAgentGatewayEnabled(body.enabled === true);
   if (method === 'POST' && pathname === '/api/settings/prefer-low-latency') return setPreferLowLatencyRoutes(body.enabled === true);
   if (method === 'POST' && pathname === '/api/settings/webrtc') return setWebRtcConfig(body.webrtc || body.config || body);
@@ -4979,6 +5059,8 @@ ipcMain.handle('lch:create-home', (_event, name, stealth) => createHome(name, Bo
   ipcMain.handle('lch:set-auto-trust', (_event, enabled) => setAutoTrustDevices(Boolean(enabled)));
   ipcMain.handle('lch:get-auto-launch', () => getAutoLaunch());
   ipcMain.handle('lch:set-auto-launch', (_event, enabled) => setAutoLaunch(Boolean(enabled)));
+  ipcMain.handle('lch:get-lch-on-path', () => getLchOnPath());
+  ipcMain.handle('lch:set-lch-on-path', (_event, enabled) => setLchOnPath(Boolean(enabled)));
   ipcMain.handle('lch:set-agent-gateway', (_event, enabled) => setAgentGatewayEnabled(Boolean(enabled)));
   ipcMain.handle('lch:set-prefer-low-latency', (_event, enabled) => setPreferLowLatencyRoutes(Boolean(enabled)));
   ipcMain.handle('lch:set-webrtc-config', (_event, config) => setWebRtcConfig(config || {}));

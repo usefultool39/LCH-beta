@@ -24,6 +24,8 @@ declare global {
       setAutoTrust: (enabled: boolean) => Promise<AppStateView>;
       getAutoLaunch: () => Promise<{ enabled: boolean; available: boolean; reason?: string }>;
       setAutoLaunch: (enabled: boolean) => Promise<{ enabled: boolean; available: boolean; reason?: string }>;
+      getLchOnPath: () => Promise<{ enabled: boolean; available: boolean; reason?: string; cliPath?: string }>;
+      setLchOnPath: (enabled: boolean) => Promise<{ enabled: boolean; available: boolean; reason?: string; cliPath?: string }>;
       setAgentGateway: (enabled: boolean) => Promise<AppStateView>;
       setPreferLowLatencyRoutes: (enabled: boolean) => Promise<AppStateView>;
       setWebRtcConfig: (config: WebRtcConfig) => Promise<AppStateView>;

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.18.0
+
 - Fix: `refreshManualPeers` no longer crashes when the manual peer list is
   mutated concurrently (for example, `removeManualPeer` running while
   `refreshManualPeers`'s HTTP probes are still in flight). The fix snapshots

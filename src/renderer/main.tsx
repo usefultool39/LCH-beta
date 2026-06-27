@@ -1608,6 +1608,7 @@ function SettingsView({
   onUpdateName,
   onSetAutoTrust,
   onSetAutoLaunch,
+  onSetLchOnPath,
   onSetAgentGateway,
   onSetPreferLowLatencyRoutes,
   onSetWebRtcConfig,
@@ -1622,6 +1623,7 @@ function SettingsView({
   onUpdateName: (name: string) => void;
   onSetAutoTrust: (enabled: boolean) => void;
   onSetAutoLaunch: (enabled: boolean) => Promise<unknown> | void;
+  onSetLchOnPath: (enabled: boolean) => Promise<unknown> | void;
   onSetAgentGateway: (enabled: boolean) => void;
   onSetPreferLowLatencyRoutes: (enabled: boolean) => Promise<unknown> | void;
   onSetWebRtcConfig: (config: WebRtcConfig) => Promise<unknown> | void;
@@ -1972,6 +1974,32 @@ function SettingsView({
             >
               {state.autoLaunch.enabled ? <PowerOff size={16} /> : <Power size={16} />}
               {state.autoLaunch.enabled ? '关闭开机自启' : '开启开机自启'}
+            </button>
+          </div>
+        </section>
+        <section className="panel settingsLchOnPath">
+          <div className="panelHeader">
+            <div>
+              <h2>lch 命令行（CLI）</h2>
+              <p>{state.lchOnPath.enabled
+                ? '已注册：直接在 PowerShell / cmd 跑 `lch devices`、`lch run`、`lch file get` 等命令。'
+                : '当前未注册：在 PowerShell 跑 `lch` 会提示找不到命令。'}</p>
+              {state.lchOnPath.cliPath ? <p className="settingsHint">已指向：{state.lchOnPath.cliPath}</p> : null}
+              {state.lchOnPath.reason ? <p className="settingsHint">{state.lchOnPath.reason}</p> : null}
+            </div>
+            <span className={`statusPill ${state.lchOnPath.enabled ? 'online' : (state.lchOnPath.available ? 'offline' : 'permission')}`}>
+              {state.lchOnPath.enabled ? '已注册' : (state.lchOnPath.available ? '未注册' : '不支持')}
+            </span>
+          </div>
+          <p>开启后会把 lch.exe 通过 App Paths 注册到当前用户，新打开的 PowerShell / cmd 即可使用。Mac / Linux 暂未实现（用 source 仓库里的 <code>node scripts/lch.js</code> 替代）。</p>
+          <div className="rowActions">
+            <button
+              className={state.lchOnPath.enabled ? 'secondary' : 'primary'}
+              disabled={!state.lchOnPath.available}
+              onClick={() => onSetLchOnPath(!state.lchOnPath.enabled)}
+            >
+              {state.lchOnPath.enabled ? <X size={16} /> : <TerminalSquare size={16} />}
+              {state.lchOnPath.enabled ? '移除 lch 命令' : '添加 lch 到命令'}
             </button>
           </div>
         </section>
@@ -2937,6 +2965,7 @@ useEffect(() => {
           onUpdateName={(name) => run(() => api.updateName(name))}
           onSetAutoTrust={(enabled) => run(() => api.setAutoTrust(enabled))}
           onSetAutoLaunch={(enabled) => run(() => api.setAutoLaunch(enabled))}
+          onSetLchOnPath={(enabled) => run(() => api.setLchOnPath(enabled))}
           onSetAgentGateway={(enabled) => run(() => api.setAgentGateway(enabled))}
           onSetPreferLowLatencyRoutes={(enabled) => run(() => api.setPreferLowLatencyRoutes(enabled))}
           onSetWebRtcConfig={(config) => run(() => api.setWebRtcConfig(config))}

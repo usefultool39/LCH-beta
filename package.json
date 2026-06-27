@@ -46,7 +46,9 @@
     ],
     "asarUnpack": [
       "node_modules/node-pty/**/*",
-      "node_modules/@homebridge/node-pty-prebuilt-multiarch/**/*"
+      "node_modules/@homebridge/node-pty-prebuilt-multiarch/**/*",
+      "scripts/lch.js",
+      "scripts/lch.cmd"
     ],
     "win": {
       "icon": "build/icon.ico",

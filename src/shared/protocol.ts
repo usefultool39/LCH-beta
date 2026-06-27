@@ -1,5 +1,5 @@
 export const APP_NAME = 'Lan Control Hub';
-export const APP_VERSION = '0.16.0';
+export const APP_VERSION = '0.18.0';
 export const STATE_SCHEMA_VERSION = 6;
 export const DISCOVERY_PROTOCOL_VERSION = 1;
 export const CONTROL_PROTOCOL_VERSION = 1;
@@ -344,6 +344,13 @@ export interface AutoLaunchInfo {
   reason?: string;
 }
 
+export interface LchOnPathInfo {
+  enabled: boolean;
+  available: boolean;
+  reason?: string;
+  cliPath?: string;
+}
+
 export interface FirewallStatus {
   platform: Platform;
   supported: boolean;
@@ -423,6 +430,7 @@ transfers: TransferRecord[];
   networkInfo: NetworkInfo;
   webrtc: WebRtcConfig;
   autoLaunch: AutoLaunchInfo;
+  lchOnPath: LchOnPathInfo;
   /**
    * Transient (in-memory only). Set to Date.now() right after
    * createHome / joinHome resolves, so the renderer can decide to

@@ -32,15 +32,21 @@ Lan Control Hub 是一个 Windows/macOS 多网络入口的局域网/虚拟专网
 
 ## 下载 Release
 
-当前推荐使用 `v0.16.0`。这一版合并了手机端聊天式 CLI 智能体控制入口和完整磁盘访问修复：目标电脑开启“完整磁盘访问”后，可信设备可以从远程文件页看到 `C:`、`D:` 和外接盘等可见磁盘。
+当前推荐使用 `v0.18.0`。这一版包含：
+- **网络感知 + 开机自启** (Phase A)：登录界面显示当前网络（Tailscale / 局域网），设置 → 系统里可一键开启开机自启
+- **Tailscale 子网扫描 + 房主隐身 + 智能扫描入口** (Phase B)
+- **加入房间后的信任向导** (Phase C.1)：弹窗逐台选信任 / 一键全信
+- **多入口路由排序 + 延迟测量** (Phase C.2)：每条 route 显示 `· N ms`
+- **按延迟自动选路（实验性开关）** (Phase D)：设置 → 系统 → 高级，默认关闭，开了之后控制消息自动按延迟选 + fail-over
+- **`lch` CLI 加 App Paths 开关** (Issue 2)：设置 → 系统 → lch 命令行，一键注册到当前用户的 App Paths，新 shell 即可用 `lch devices`
 
 从 GitHub Releases 下载和自己设备匹配的包：
 
 ```text
-Lan-Control-Hub-0.16.0-win-x64-portable.exe
-Lan-Control-Hub-0.16.0-win-x64-setup.exe
-Lan-Control-Hub-0.16.0-mac-x64.zip
-Lan-Control-Hub-0.16.0-mac-arm64.zip
+Lan-Control-Hub-0.18.0-win-x64-portable.exe
+Lan-Control-Hub-0.18.0-win-x64-setup.exe
+Lan-Control-Hub-0.18.0-mac-x64.zip
+Lan-Control-Hub-0.18.0-mac-arm64.zip
 SHA256SUMS.txt
 ```
 
@@ -139,8 +145,8 @@ npm run package:win
 输出位置：
 
 ```text
-release/Lan-Control-Hub-0.16.0-win-x64-portable.exe
-release/Lan-Control-Hub-0.16.0-win-x64-setup.exe
+release/Lan-Control-Hub-0.18.0-win-x64-portable.exe
+release/Lan-Control-Hub-0.18.0-win-x64-setup.exe
 ```
 
 macOS 打包脚本保留在 `package.json` 中，但需要在真实 macOS 环境运行并验证。
@@ -148,8 +154,8 @@ macOS 打包脚本保留在 `package.json` 中，但需要在真实 macOS 环境
 GitHub Release 会由 tag 自动触发：
 
 ```bash
-git tag v0.16.0
-git push origin v0.16.0
+git tag v0.18.0
+git push origin v0.18.0
 ```
 
 成功后 Release 附件会包含 Windows exe、macOS zip 和 `SHA256SUMS.txt`。

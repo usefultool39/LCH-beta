@@ -155,6 +155,7 @@ type SharedUploadToken = SharedFileToken & {
 const DEFAULT_HOME_NAME = '我的局域网';
 const DOWNLOAD_FOLDER_NAME = 'LanControlHub';
 const HEADLESS = process.argv.includes('--headless') || process.env.LCH_HEADLESS === '1';
+const START_HIDDEN = process.argv.includes('--hidden') || process.env.LCH_START_HIDDEN === '1';
 const RELEASES_URL = 'https://github.com/usefultool39/LCH-beta/releases/latest';
 const LATEST_RELEASE_API_URL = 'https://api.github.com/repos/usefultool39/LCH-beta/releases/latest';
 
@@ -697,7 +698,8 @@ function setAutoLaunch(enabled: boolean): AutoLaunchInfo {
   }
   app.setLoginItemSettings({
     openAtLogin: Boolean(enabled),
-    // On Windows, also pass --hidden so the App starts minimized to tray.
+    path: process.execPath,
+    // On Windows, also pass --hidden so the App starts without opening the main window.
     args: enabled ? ['--hidden'] : []
   });
   addAudit(
@@ -5003,7 +5005,8 @@ async function openRemoteControlWindow(peerId: string, modeValue: RemoteSessionM
   };
 }
 
-function createWindow() {
+function createWindow(options: { show?: boolean } = {}) {
+  const show = options.show !== false;
   mainWindow = new BrowserWindow({
     width: 1360,
     height: 820,
@@ -5013,6 +5016,7 @@ function createWindow() {
     icon: path.join(__dirname, '../../build/icon.png'),
     autoHideMenuBar: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f172a' : '#f5f7fb',
+    show,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -5022,6 +5026,11 @@ function createWindow() {
   mainWindow.setMenuBarVisibility(false);
   loadRendererWindow(mainWindow);
   mainWindow.webContents.on('did-finish-load', emitState);
+  if (!show) {
+    mainWindow.once('ready-to-show', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+    });
+  }
 }
 
 function registerIpc() {
@@ -5198,7 +5207,7 @@ if (!app.requestSingleInstanceLock()) {
     await startLocalApiServer();
     scheduleWindowsFirewallRefresh();
     startDiscovery();
-    if (!HEADLESS) createWindow();
+    if (!HEADLESS) createWindow({ show: !START_HIDDEN });
     app.on('activate', () => {
       if (!HEADLESS && BrowserWindow.getAllWindows().length === 0) createWindow();
     });

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.19.1
+
+- Fix: Windows/macOS auto-launch now registers the packaged executable path and honors the `--hidden` startup argument, so enabling Settings -> System -> open at login starts Lan Control Hub in the background instead of popping the main window.
+- Fix: the setup screen now passes the stealth-room checkbox through to `createHome`, so newly created stealth rooms actually skip UDP presence broadcasts while still responding to direct probes.
+
 ## v0.19.0
 
 - Phase D goes default-on. `preferLowLatencyRoutes` now defaults to

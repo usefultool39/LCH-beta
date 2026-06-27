@@ -2863,7 +2863,7 @@ useEffect(() => {
 <SetupScreen
         rooms={state.nearbyRooms || []}
         networkInfo={state.networkInfo}
-        onCreate={(name) => run(() => api.createHome(name))}
+        onCreate={(name, stealth) => run(() => api.createHome(name, stealth))}
         onJoin={(secret, name, expectedHomeId) => run(() => api.joinHome(secret, name, expectedHomeId))}
         onScanRooms={() => run(() => api.scanRooms())}
       />

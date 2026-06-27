@@ -32,7 +32,7 @@ Lan Control Hub 是一个 Windows/macOS 多网络入口的局域网/虚拟专网
 
 ## 下载 Release
 
-当前推荐使用 `v0.19.0`。这一版包含 v0.18.0 的所有功能（Tailscale 子网扫描、隐身房间、信任向导、路由排序/延迟、`lch` CLI App Paths 开关），并把 Phase D 的「按延迟自动选路」改为默认开启。
+当前推荐使用 `v0.19.1`。这一版包含 v0.18.0 的所有功能（Tailscale 子网扫描、隐身房间、信任向导、路由排序/延迟、`lch` CLI App Paths 开关），并把 Phase D 的「按延迟自动选路」改为默认开启。
 - **网络感知 + 开机自启** (Phase A)：登录界面显示当前网络（Tailscale / 局域网），设置 → 系统里可一键开启开机自启
 - **Tailscale 子网扫描 + 房主隐身 + 智能扫描入口** (Phase B)
 - **加入房间后的信任向导** (Phase C.1)：弹窗逐台选信任 / 一键全信
@@ -43,10 +43,10 @@ Lan Control Hub 是一个 Windows/macOS 多网络入口的局域网/虚拟专网
 从 GitHub Releases 下载和自己设备匹配的包：
 
 ```text
-Lan-Control-Hub-0.19.0-win-x64-portable.exe
-Lan-Control-Hub-0.19.0-win-x64-setup.exe
-Lan-Control-Hub-0.19.0-mac-x64.zip
-Lan-Control-Hub-0.19.0-mac-arm64.zip
+Lan-Control-Hub-0.19.1-win-x64-portable.exe
+Lan-Control-Hub-0.19.1-win-x64-setup.exe
+Lan-Control-Hub-0.19.1-mac-x64.zip
+Lan-Control-Hub-0.19.1-mac-arm64.zip
 SHA256SUMS.txt
 ```
 
@@ -154,8 +154,8 @@ macOS 打包脚本保留在 `package.json` 中，但需要在真实 macOS 环境
 GitHub Release 会由 tag 自动触发：
 
 ```bash
-git tag v0.19.0
-git push origin v0.19.0
+git tag v0.19.1
+git push origin v0.19.1
 ```
 
 成功后 Release 附件会包含 Windows exe、macOS zip 和 `SHA256SUMS.txt`。

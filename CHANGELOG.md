@@ -48,6 +48,25 @@
   `HomeInfo.stealth` flag is persisted via `state-migration`; the
   SetupScreen shows a "隐身" badge on stealth rooms and reminds users
   that joining requires the secret by hand.
+- Feat: post-join trust wizard (v0.18.0). Right after createHome /
+  joinHome, the App pops a modal listing every peer in the room that
+  is not yet trusted, with per-device "信任" buttons and a top-level
+  "全部信任" / "稍后再决定" pair. Triggered by the new transient
+  `AppStateView.postJoinTrustPromptedAt` field. Decision logic is
+  isolated in `src/shared/trust-wizard.ts` so it's unit-testable.
+  6 new tests cover missing / seen / pending / all-trusted / empty
+  / nullish inputs.
+- Feat: multi-route priority (v0.18.0, partial). Each peer entry's
+  `networkRoutes` is now sorted by liveness + latency + kind preference
+  (tailnet > lan > manual) via `src/shared/route-priority.ts`. The
+  helper is pure and unit-tested (7 new tests). Manual peer probes
+  (`refreshManualPeers` / `connectManualPeer`) record latencyMs on
+  the matching `ManualPeerAddress`, and the renderer surfaces the
+  millisecond latency in the route badge. The actual transport
+  selection (preferring the lowest-latency route when sending control
+  messages) is tracked in `docs/room-discovery-redesign.md` as the
+  Phase D follow-up so it can land behind a feature flag without
+  destabilizing v0.18.
 
 ## v0.16.0
 

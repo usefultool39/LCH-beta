@@ -4,9 +4,10 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm } from '@xterm/xterm';
 import {
   Camera,
-  CheckCircle2,
+CheckCircle2,
   Circle,
   Clipboard,
+  Clock,
   Copy,
   Download,
   File as FileIcon,
@@ -42,13 +43,15 @@ Power,
   TerminalSquare,
   Trash2,
   Upload,
-  Users,
+Users,
   Image as ImageIcon,
   Film,
   Music2,
-  FileText
+  FileText,
+  X
 } from 'lucide-react';
 import { APP_VERSION, CHAT_REACTION_EMOJIS, DEFAULT_WEBRTC_CONFIG, MAX_FILE_BYTES } from '../shared/protocol';
+import { shouldAutoOpenTrustWizard } from '../shared/trust-wizard';
 import type { AppStateView, ConversationRecord, DevicePreference, FirewallStatus, LanRoomInfo, NetworkInfo, PeerInfo, RemoteInputEvent, RemoteOpenResult, RemoteSessionRecord, SharedFileToken, SharedFolderListing, TaskRecord, TerminalOutputEvent, TransferRecord, WebRtcConfig, WebRtcIceTransportPolicy } from '../shared/protocol';
 import '@xterm/xterm/css/xterm.css';
 import './styles.css';
@@ -213,7 +216,8 @@ function routeStatusText(status?: string) {
 function routeLabel(route?: PeerInfo['primaryRoute']) {
   if (!route) return '未知路径';
   const status = routeStatusText(route.status) ? ` · ${routeStatusText(route.status)}` : '';
-  return `${route.label || route.kind} · ${routeEndpoint(route)}${route.current ? ' · 当前' : ''}${status}`;
+  const latency = typeof route.latencyMs === 'number' ? ` · ${route.latencyMs} ms` : '';
+  return `${route.label || route.kind} · ${routeEndpoint(route)}${route.current ? ' · 当前' : ''}${latency}${status}`;
 }
 
 function peerSearchText(peer: PeerInfo) {
@@ -1057,7 +1061,7 @@ function ChatView({ state, conversation, messages, onSelectConversation, onCreat
             ) : null}
             <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="输入消息，支持 **加粗**、`代码` 和 ```代码块```" />
           </div>
-          <button className="primary" disabled={!conversation || !text.trim() || !canSend} onClick={() => {
+<button className="primary" disabled={!conversation || !text.trim() || !canSend} onClick={() => {
             onSendText(text, replyTo ? { replyTo: replyRefFromMessage(replyTo) } : undefined);
             setText('');
             setReplyTo(null);
@@ -1065,6 +1069,58 @@ function ChatView({ state, conversation, messages, onSelectConversation, onCreat
         </footer>
       </div>
     </section>
+  );
+}
+
+function TrustOnboardingDialog({
+  pendingPeers,
+  busy,
+  onTrustOne,
+  onTrustAll,
+  onLater
+}: {
+  pendingPeers: PeerInfo[];
+  busy: boolean;
+  onTrustOne: (peerId: string) => void;
+  onTrustAll: () => void;
+  onLater: () => void;
+}) {
+  const [hidden, setHidden] = useState(false);
+  if (hidden) return null;
+  if (!pendingPeers.length) return null;
+  return (
+    <div className="modalBackdrop" role="dialog" aria-modal="true" aria-label="加入房间后的信任向导">
+      <div className="modal trustWizard">
+        <div className="modalHeader">
+          <div>
+            <h2>选择要信任的设备</h2>
+            <p>刚加入这个房间。以下是房间内现在可见的设备；逐台选信任，或者一键全部信任。稍后再决定也不会丢失 — 你随时可以回来这里。</p>
+          </div>
+          <button className="ghost" title="关闭" onClick={() => setHidden(true)}><X size={18} /></button>
+        </div>
+        <div className="trustList">
+          {pendingPeers.map((peer) => (
+            <div className="trustRow" key={peer.id}>
+              <div>
+                <strong>{peerLabel(peer)}</strong>
+                <span>{peer.publicKeyHash} · {peer.address}</span>
+              </div>
+              <button className="primary" disabled={busy} onClick={() => onTrustOne(peer.id)}>
+                <ShieldCheck size={16} /> 信任
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="rowActions wizardFooter">
+          <button className="primary wide" disabled={busy} onClick={onTrustAll}>
+            <ShieldCheck size={16} /> 全部信任 ({pendingPeers.length})
+          </button>
+          <button className="secondary wide" disabled={busy} onClick={onLater}>
+            <Clock size={16} /> 稍后再决定
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2512,6 +2568,9 @@ function App() {
   const [terminal, setTerminal] = useState<TerminalTab | null>(null);
   const [screen, setScreen] = useState<ScreenSession | null>(null);
   const [remoteNotice, setRemoteNotice] = useState<RemoteNotice | null>(null);
+  const [trustDialogOpen, setTrustDialogOpen] = useState(false);
+  const [trustBusy, setTrustBusy] = useState(false);
+  const [lastSeenTrustPrompt, setLastSeenTrustPrompt] = useState(0);
   const peerConnections = useRef(new Map<string, RTCPeerConnection>());
   const shareStreams = useRef(new Map<string, MediaStream>());
 
@@ -2563,13 +2622,29 @@ function App() {
     if (fallbackId) setSelectedConversationId(fallbackId);
   }, [chatConversations, selectedConversationId, selectedPeer?.id, state]);
 
-  useEffect(() => {
+useEffect(() => {
     if (view === 'chat' && selectedConversation?.kind === 'direct') {
       const peerId = directPeerId(selectedConversation, state!) || selectedConversation.id;
       const peer = state?.peers.find((item) => item.id === peerId);
       if (peer?.unreadCount) updatePreference(peer.id, { unreadCount: 0 });
     }
   }, [view, selectedConversation?.id, state?.peers]);
+
+  // Pop the post-join trust wizard when the main process bumps
+  // postJoinTrustPromptedAt. We track the highest seen value so we
+  // only fire once per bump, even if state updates arrive in bursts.
+  useEffect(() => {
+    if (!state) return;
+    const should = shouldAutoOpenTrustWizard({
+      promptedAt: state.postJoinTrustPromptedAt || 0,
+      lastSeen: lastSeenTrustPrompt,
+      peers: state.peers
+    });
+    if (should) {
+      setLastSeenTrustPrompt(state.postJoinTrustPromptedAt || 0);
+      setTrustDialogOpen(true);
+    }
+  }, [state?.postJoinTrustPromptedAt, state?.peers, lastSeenTrustPrompt, state]);
 
   async function run(action: () => Promise<unknown>) {
     setError('');
@@ -2899,7 +2974,7 @@ function App() {
           setScreen(null);
         }}
       />
-      <RemoteControlBanner
+<RemoteControlBanner
         notice={remoteNotice}
         onStop={() => {
           if (!remoteNotice) return;
@@ -2907,6 +2982,24 @@ function App() {
           api.stopScreen(remoteNotice.peerId, remoteNotice.sessionId).catch(() => {});
           setRemoteNotice(null);
         }}
+      />
+      <TrustOnboardingDialog
+        pendingPeers={trustDialogOpen ? (state?.peers || []).filter((peer) => !peer.trusted) : []}
+        busy={trustBusy}
+        onTrustOne={(peerId) => run(() => api.trustDevice(peerId))}
+        onTrustAll={() => run(async () => {
+          setTrustBusy(true);
+          try {
+            for (const peer of (state?.peers || [])) {
+              if (peer.trusted) continue;
+              try { await api.trustDevice(peer.id); } catch (err) { /* ignore individual failure */ }
+            }
+          } finally {
+            setTrustBusy(false);
+            setTrustDialogOpen(false);
+          }
+        })}
+        onLater={() => setTrustDialogOpen(false)}
       />
     </main>
   );

@@ -69,6 +69,7 @@ import { blockedDeviceFromTrust, isDeviceBlocked, isDeviceTrusted, trustedDevice
 import { migrateState, normalizeWebRtcConfig, type PersistedAppState } from '../shared/state-migration';
 import { applyManualPeerProbeResults } from '../shared/manual-peers';
 import { isStealthHome, isTailnetAddress, tailnetHostsFromLocalAddresses as computeTailnetHosts } from '../shared/tailnet-scan';
+import { pickPrimaryRoute, sortRoutesByLatency } from '../shared/route-priority';
 
 type RuntimePeer = PeerInfo;
 
@@ -162,6 +163,10 @@ let state: AppState;
 let discoverySocket: dgram.Socket | null = null;
 let discoveryTimer: NodeJS.Timeout | null = null;
 let pruneTimer: NodeJS.Timeout | null = null;
+
+// In-memory only; not persisted. Bumped on every createHome / joinHome so
+// the renderer can detect "freshly joined" without comparing wall clocks.
+let postJoinTrustPromptedAt = 0;
 let controlWss: WebSocketServer | null = null;
 let webServer: http.Server | null = null;
 let localApiServer: http.Server | null = null;
@@ -971,12 +976,13 @@ function peerNetworkRoutes(peer: RuntimePeer, isOnline: boolean) {
       source: 'manual',
       lastSeenAt: manualPeer.lastSeenAt,
       lastCheckedAt: manualPeer.lastCheckedAt,
+      latencyMs: manualPeer.latencyMs,
       lastError: manualPeer.lastError
     });
   }
-  return routes.sort((a, b) => Number(b.current) - Number(a.current)
-    || Number(b.status === 'online') - Number(a.status === 'online')
-    || a.label.localeCompare(b.label));
+  // Sort by liveness + latency so the renderer can show a stable,
+  // pre-prioritized order without re-doing the math itself.
+  return sortRoutesByLatency(routes);
 }
 
 function serializePeers() {
@@ -1110,7 +1116,8 @@ function appStateView() {
     transfers: state.transfers.slice(0, MAX_TRANSFER_RECORDS),
 networkInfo: networkInfo(),
     webrtc: state.webrtc,
-    autoLaunch: getAutoLaunch()
+    autoLaunch: getAutoLaunch(),
+    postJoinTrustPromptedAt: postJoinTrustPromptedAt || undefined
   };
 }
 
@@ -2415,6 +2422,7 @@ function createHome(name = DEFAULT_HOME_NAME, stealth = false) {
     stealth: Boolean(stealth)
   };
   trustSelf();
+  postJoinTrustPromptedAt = Date.now();
   saveState();
   broadcastPresence();
   emitState();
@@ -2446,6 +2454,7 @@ function joinHome(secret: string, name = DEFAULT_HOME_NAME, expectedHomeId = '')
     createdAt: Date.now()
   };
   trustSelf();
+  postJoinTrustPromptedAt = Date.now();
   peers.clear();
   saveState();
   broadcastPresence();
@@ -2677,13 +2686,15 @@ async function probeManualPeer(address: string) {
   ensureHome();
   let lastError: unknown = null;
   for (const candidate of manualPeerCandidates(address)) {
+    const startedAt = Date.now();
     try {
       const packet = await getHttpJson<DiscoveryPacket>(candidate.url, 3500);
+      const latencyMs = Date.now() - startedAt;
       if (!isDiscoveryPacket(packet)) throw new Error('远程设备返回的信息格式无效');
       if (!state.home || packet.homeId !== state.home.id) throw new Error('远程设备不在当前家庭网络，请确认加入密钥一致');
       if (packet.device.id === state.device.id) throw new Error('不能添加本机地址');
       rememberPeer(packet, candidate.host);
-      return { packet, address: candidate.label, host: candidate.host, port: candidate.port };
+      return { packet, address: candidate.label, host: candidate.host, port: candidate.port, latencyMs };
     } catch (error) {
       lastError = error;
     }
@@ -2708,7 +2719,7 @@ async function connectManualPeer(address: string) {
   }
   record.lastCheckedAt = Date.now();
   try {
-    const result = await probeManualPeer(address);
+const result = await probeManualPeer(address);
     record.address = result.address;
     record.host = result.host;
     record.port = result.port;
@@ -2716,6 +2727,7 @@ async function connectManualPeer(address: string) {
     record.status = 'online';
     record.lastSeenAt = Date.now();
     record.lastError = undefined;
+    record.latencyMs = result.latencyMs;
     record.peerId = result.packet.device.id;
     record.peerName = result.packet.device.name;
   } catch (error: any) {

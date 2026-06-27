@@ -16,7 +16,8 @@
 |---|---|---|---|
 | A | 网络感知 + 开机自动启动 | ✅ 已落地 | `3b298b5` |
 | B | Tailscale 子网扫描 + 房主隐身 + 智能扫描入口 | ✅ 已落地 | `6819643` |
-| C | 加入后信任向导 + 跨网路由优先 | ⏳ 路线图 | — |
+| C | 加入后信任向导 + 跨网路由优先（排序/延迟） | ✅ 已落地 | `<phase-c HEAD>` |
+| D | 跨网路由优先 — 真实控制消息按延迟选路（feature flag） | ⏳ 路线图 | — |
 
 每次完成一块，**就地更新这张表**，并 commit 进 git。
 
@@ -97,29 +98,61 @@
 
 ---
 
-## Phase C：v0.18.0（路线图）
+## Phase C：v0.18.0（已落地 — HEAD 待提交后填入）
 
-### C.1 加入后信任向导 [P1]
+### C.1 加入后信任向导 [P1] ✅
 
 **目标**：加入房间后弹信任向导，逐台选信任/跳过，可一键全部信任。
 
-**实现路径**：
-- 新组件 `TrustOnboardingDialog`，在 `joinHome()` 成功后弹一次
-- 复用 `state.trustedDevices / blockedDevices / devicePreferences`
-- 提供「全部信任」「稍后再决定」两种结束路径
+**实际实现**：
+1. 加 transient `postJoinTrustPromptedAt` 字段到 `AppStateView`（不持久化）
+2. `createHome` / `joinHome` 后 module-level 设 `postJoinTrustPromptedAt = Date.now()`
+3. Renderer `useEffect` 监听 `state.postJoinTrustPromptedAt`，新值 → 弹 dialog
+4. 决策逻辑抽到 `src/shared/trust-wizard.ts` 的 `shouldAutoOpenTrustWizard()` helper
+5. `TrustOnboardingDialog` 组件渲染未信任设备列表，每行一个「信任」按钮
+6. 顶部「全部信任 (N)」+「稍后再决定」+ 右上角「X」关闭
+7. 状态机：只在 `promptedAt > lastSeen` 且有未信任设备时才弹
+8. 6 个测试覆盖 missing / seen / pending / all-trusted / empty / nullish
 
-**预计工作量**：1-2 天
+**测试**：`tests/trust-wizard.test.js` — 6 个新测试
 
-### C.2 跨网路由优先 [P1]
+### C.2 跨网路由优先 [P1] ✅ (partial — 排序 + 延迟测量)
 
 **目标**：客户端维护多入口（tailnet > lan > manual），按延迟优先。
 
-**实现路径**：
-- `PeerInfo.networkRoutes` 已存在，扩排序逻辑
-- 主动探测每个入口，握手成功的入 active list
-- 控制消息只走 active list 里延迟最低的
+**v0.18.0 实际实现（partial）**：
+1. `PeerNetworkRoute.latencyMs?: number` 字段已加
+2. `ManualPeerAddress.latencyMs?: number` 字段已加（记录手动 peer 的探测延迟）
+3. `probeManualPeer()` 返回 `latencyMs`（HTTP 探测耗时）
+4. `connectManualPeer()` 把 `latencyMs` 写入 record
+5. `peerNetworkRoutes()` 输出用 `sortRoutesByLatency()` 排序（取代原 inline sort）
+6. Renderer `routeLabel()` 在 route badge 后显示 ` · N ms`
+7. 排序规则：
+   - online 优先
+   - 有 latency 优先于没 latency
+   - 同条件下 latency 升序
+   - 同条件下 kind: tailnet > lan > manual
 
-**预计工作量**：3-4 天
+**新文件**：
+- `src/shared/route-priority.ts` — `sortRoutesByLatency` + `pickPrimaryRoute`（pure，可测）
+- `tests/route-priority.test.js` — 7 个测试
+
+**v0.19.0 / Phase D 后续**：
+- 真正用 `pickPrimaryRoute()` 选路发送控制消息（替换当前 `peer.address` 单地址连接）
+- 引入 feature flag 让老行为可回退
+- 探测超时重试 + 多入口并行探测
+
+### C 综合工作量
+
+约 1.5 天（C.1 完整 + C.2 partial）。Phase D 留待 v0.19.0（约 3-4 天）。
+
+## Phase D：v0.19.0（路线图 — 真实控制消息按延迟选路）
+
+把 Phase C.2 的 partial 实现推进到「真的用最低延迟路由」：
+1. 维护每台 peer 的 active route（heartbeat / probe）
+2. 发送控制消息时查 `pickPrimaryRoute(routes)`，连不上回退下一条
+3. UI 显示「当前走 100.x（8ms）」类似标识
+4. feature flag 默认开，老行为可回退
 
 ---
 

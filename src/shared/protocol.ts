@@ -105,6 +105,12 @@ export interface ManualPeerAddress {
   lastError?: string;
   peerId?: string;
   peerName?: string;
+  /**
+   * Most recent probe latency in milliseconds. Populated by
+   * refreshManualPeers / connectManualPeer. Undefined means we have
+   * not yet measured this entry.
+   */
+  latencyMs?: number;
 }
 
 export type PeerNetworkRouteKind = 'lan' | 'tailnet' | 'manual';
@@ -120,6 +126,11 @@ export interface PeerNetworkRoute {
   source: 'discovery' | 'manual';
   lastSeenAt?: number;
   lastCheckedAt?: number;
+  /**
+   * Most recent latency observation in milliseconds for this route.
+   * Routes without a measurement are sorted after measured ones.
+   */
+  latencyMs?: number;
   lastError?: string;
 }
 
@@ -411,6 +422,13 @@ transfers: TransferRecord[];
   networkInfo: NetworkInfo;
   webrtc: WebRtcConfig;
   autoLaunch: AutoLaunchInfo;
+  /**
+   * Transient (in-memory only). Set to Date.now() right after
+   * createHome / joinHome resolves, so the renderer can decide to
+   * pop the post-join trust wizard without having to compare wall
+   * clocks against `home.createdAt`. Not persisted.
+   */
+  postJoinTrustPromptedAt?: number;
 }
 
 export interface ControlPayload<T = unknown> {

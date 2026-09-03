@@ -1,5 +1,7 @@
 # Lan Control Hub
 
+> **局域网控制中枢（Lan Control Hub）**：让同一局域网/虚拟专网里的设备互相发现、聊天、传文件、浏览文件库、执行远程命令、看屏与远程控制。
+
 Lan Control Hub 是一个 Windows/macOS 多网络入口的局域网/虚拟专网设备控制工具。多台电脑加入同一个家庭网络后，可以互相发现、聊天、传文件、浏览文件库、执行远程命令、打开终端、看屏和远程控制。
 
 这个仓库用于公开保存源码、文档和后续更新记录，许可证为 MIT。打包产物默认放在本地 `release/`，不提交到 Git；正式分发通过 GitHub Releases 附件提供 Windows exe、macOS zip 和 `SHA256SUMS.txt`。
